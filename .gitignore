@@ -30,13 +30,26 @@ __pycache__/
 *.swp
 *~
 
+# 미로/홀 월드의 벽 텍스처는 **커밋하지 않습니다** (176 장, 약 75 MB).
+# 시드가 고정(MAZE_SEED / HALL_SEED)이라 아래 한 줄이면 바이트 단위로 같은
+# 파일이 나옵니다. 3.9 초 걸립니다:
+#
+#     python3 src/orinbot_bringup/models/room_materials/generate_textures.py maze hall
+#
+# 없는 채로 월드를 띄우면 벽이 흰색으로 뜨고, 그러면 특징점이 없어
+# **시각 오도메트리가 그대로 실패합니다** (증상은 "SLAM 이 안 붙음").
+src/orinbot_bringup/models/room_materials/materials/textures/maze_*.png
+src/orinbot_bringup/models/room_materials/materials/textures/hall_*.png
+
 # 커밋하는 것 — 생성물이지만 일부러 넣습니다
-#   worlds/room.sdf                     : Gazebo 가 직접 읽는 파일
-#   models/room_materials/.../*.png     : 고정 시드(20260801)로 결정적.
-#                                         받아서 바로 같은 월드가 되어야
-#                                         SLAM 측정을 비교할 수 있습니다.
-# 주의: generate_textures.py 의 N_WALL_SEGMENTS 를 바꾸면 28장이 전부
-# 다시 생성되어 13 MB 짜리 커밋이 됩니다. 자주 건드리지 마세요.
+#   worlds/*.sdf                        : Gazebo 가 직접 읽는 파일
+#   .../wall_*.png, office_*.png 등     : 고정 시드로 결정적. 받아서 바로
+#                                         같은 월드가 되어야 SLAM 측정을
+#                                         비교할 수 있습니다.
+# room(28장) 과 office(66장) 만 커밋합니다 — 각각 회귀 기준선 월드와 최종
+# 검증 월드라 "클론하면 바로 뜨는" 것이 측정 재현에 직결됩니다.
+# 주의: generate_textures.py 의 N_WALL_SEGMENTS / N_OFFICE_SEGMENTS 를 바꾸면
+# 그 세트가 전부 다시 생성되어 십수 MB 짜리 커밋이 됩니다. 자주 건드리지 마세요.
 
 # Claude Code 개인 로컬 설정 (팀과 공유하지 않음)
 .claude/settings.local.json

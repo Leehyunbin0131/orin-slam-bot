@@ -105,3 +105,26 @@
   ros_type_name: "sensor_msgs/msg/Imu"
   gz_type_name: "gz.msgs.IMU"
   direction: GZ_TO_ROS
+
+# ---- 사무실 월드의 보행자 (office.sdf 전용) ----
+# people_sim.py 가 여기로 속도를 줍니다. 원을 그리게 두면 통로 폭(1.8 m)
+# 보다 커서 벽을 뚫고 다니고 보기에도 무의미하므로, 복도를 따라 왕복하도록
+# ROS 쪽에서 조종합니다.
+# 다른 월드에서는 구독자가 없어 아무 일도 하지 않습니다.
+- ros_topic_name: "/person_0/cmd_vel"
+  gz_topic_name: "/model/person_0/cmd_vel"
+  ros_type_name: "geometry_msgs/msg/Twist"
+  gz_type_name: "gz.msgs.Twist"
+  direction: ROS_TO_GZ
+
+- ros_topic_name: "/person_1/cmd_vel"
+  gz_topic_name: "/model/person_1/cmd_vel"
+  ros_type_name: "geometry_msgs/msg/Twist"
+  gz_type_name: "gz.msgs.Twist"
+  direction: ROS_TO_GZ
+
+- ros_topic_name: "/person_2/cmd_vel"
+  gz_topic_name: "/model/person_2/cmd_vel"
+  ros_type_name: "geometry_msgs/msg/Twist"
+  gz_type_name: "gz.msgs.Twist"
+  direction: ROS_TO_GZ

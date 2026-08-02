@@ -13,6 +13,7 @@ materials/textures/ 아래에 PNG 를 씁니다. 시드를 고정해 두어 실�
 """
 
 import math
+import sys
 import os
 
 import numpy as np
@@ -154,6 +155,33 @@ def poster(size=512, seed_shapes=26):
 N_WALL_SEGMENTS = 28
 N_POSTERS = 8
 
+# 미로 월드(maze.sdf)용 벽 텍스처. `generate_maze.py` 가 요구하는 수 이상.
+#
+# **N_WALL_SEGMENTS 를 늘려 미로용을 충당하면 안 됩니다.** 위 rng 는 전역
+# 시드를 순차 소비하므로, 벽 루프의 횟수를 바꾸면 그 뒤에 만들어지는
+# floor / poster / crate / dock_body 가 전부 달라집니다. 그러면 room.sdf
+# 의 외형이 바뀌어 CLAUDE.md 의 SLAM·탐사 기준선과 비교할 수 없게 됩니다.
+# 그래서 미로용은 별도 시드로, 별도 실행(`generate_textures.py maze`)에서
+# 만듭니다. 기존 텍스처 파일은 한 장도 건드리지 않습니다.
+N_MAZE_SEGMENTS = 80
+MAZE_SEED = 20260803
+
+# 대형 홀(hall.sdf)용. 같은 이유로 별도 시드 / 별도 실행입니다.
+# 홀은 벽·랙 면·사무실 칸막이·기둥이 전부 고유해야 해서 수가 많습니다.
+N_HALL_SEGMENTS = 100
+HALL_SEED = 20260804
+
+# 사무실 월드(office.sdf)용. **저대비** 벽입니다 (office_wall 참고).
+#
+# 위 둘과 달리 **여유분 없이 정확히 필요한 수**입니다. maze/hall 텍스처는
+# 용량 때문에 .gitignore 로 빼고 생성기만 커밋하는데, office 는 최종 검증
+# 월드라 PNG 를 커밋하기 때문입니다. 여유분 한 장이 그대로 저장소 용량이
+# 됩니다 (한 장 약 350 KB).
+# office.sdf 의 벽이 늘어나면 이 수를 함께 올리세요 — 모자라면 생성기가
+# 조용히 통과하고 Gazebo 에서 그 벽만 텍스처 없이 뜹니다.
+N_OFFICE_SEGMENTS = 66
+OFFICE_SEED = 20260805
+
 
 def mark(img, idx):
     """벽마다 서로 다른 큰 도형을 얹어 장소를 구별 가능하게 만듭니다.
@@ -198,7 +226,96 @@ def mark(img, idx):
     return img
 
 
+def main_maze():
+    """미로용 벽 텍스처만 만듭니다 (`generate_textures.py maze`).
+
+    전역 rng 를 미로 전용 시드로 갈아끼운 뒤 maze_*.png 만 씁니다.
+    별도 프로세스 실행이므로 방(room) 텍스처는 재생성되지 않습니다.
+    """
+    global rng
+    rng = np.random.default_rng(MAZE_SEED)
+    for i in range(N_MAZE_SEGMENTS):
+        # idx 에 오프셋을 주어 방 벽과 도형/색 조합이 겹치지 않게 합니다.
+        save(mark(brick_wall(), i + 101), 'maze_%03d.png' % i)
+    print('미로 벽 텍스처 %d 장 생성' % N_MAZE_SEGMENTS)
+
+
+def office_wall(idx, size=512):
+    """사무실 벽: **거의 평평합니다.**
+
+    실제 사무실 벽은 무늬가 없습니다. 그런데 무늬 없는 벽 앞에서는 ORB/GFTT
+    가 코너를 못 찾아 시각 오도메트리가 그대로 실패합니다(이 저장소의 기록:
+    "뎁스가 정확해도 오도메트리가 동작하지 않음"). 그래서 여기서는
+    **특징점을 벽이 아니라 가구가 제공**하도록 설계하고, 벽에는 실제 사무실에
+    있을 법한 것만 아주 옅게 남깁니다:
+      - 페인트 얼룩과 미세한 명암 기울기
+      - 걸레받이(아래쪽 띠)
+      - 위치마다 다른 옅은 자국 하나 (콘센트/표지판/못자국 수준)
+    대비를 낮게 유지하는 것이 요점입니다. 완전히 균일하게 만들면 서로 다른
+    방이 똑같이 보여 잘못된 루프 클로저가 납니다.
+    """
+    base = 208 + int(rng.integers(-6, 7))
+    arr = np.full((size, size, 3), (base, base - 2, base - 6), dtype=np.int16)
+    arr += rng.integers(-4, 5, (size, size, 3), dtype=np.int16)      # 미세 잡음
+    # 위->아래 완만한 명암 (조명)
+    grad = np.linspace(6, -6, size).reshape(size, 1, 1).astype(np.int16)
+    arr += grad
+    img = Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8))
+    d = ImageDraw.Draw(img)
+    # 걸레받이
+    d.rectangle([0, int(size * 0.90), size, size], fill=(150, 148, 145))
+    # 위치마다 다른 옅은 자국 하나
+    hue = (idx * 53) % 360
+    c = int(150 + 40 * math.cos(math.radians(hue)))
+    m = int(150 + 40 * math.cos(math.radians(hue + 120)))
+    y = int(150 + 40 * math.cos(math.radians(hue + 240)))
+    cx = int(size * (0.25 + 0.5 * ((idx * 7) % 10) / 10.0))
+    cy = int(size * (0.25 + 0.4 * ((idx * 3) % 10) / 10.0))
+    r = size // 14
+    if idx % 3 == 0:
+        d.rectangle([cx - r, cy - r, cx + r, cy + r], outline=(c, m, y), width=5)
+    elif idx % 3 == 1:
+        d.ellipse([cx - r, cy - r, cx + r, cy + r], outline=(c, m, y), width=5)
+    else:
+        d.line([cx - r, cy, cx + r, cy], fill=(c, m, y), width=6)
+    return img
+
+
+def main_office():
+    """사무실 월드(office.sdf)용 저대비 벽 텍스처."""
+    global rng
+    rng = np.random.default_rng(OFFICE_SEED)
+    for i in range(N_OFFICE_SEGMENTS):
+        save(office_wall(i), 'office_%03d.png' % i)
+    print('사무실 벽 텍스처 %d 장 생성 (저대비)' % N_OFFICE_SEGMENTS)
+
+
+def main_hall():
+    """대형 홀용 벽 텍스처만 만듭니다 (`generate_textures.py hall`)."""
+    global rng
+    rng = np.random.default_rng(HALL_SEED)
+    for i in range(N_HALL_SEGMENTS):
+        # 방(0~) / 미로(101~) 와 겹치지 않는 오프셋
+        save(mark(brick_wall(), i + 301), 'hall_%03d.png' % i)
+    print('홀 벽 텍스처 %d 장 생성' % N_HALL_SEGMENTS)
+
+
+MODES = {'maze': main_maze, 'hall': main_hall, 'office': main_office}
+
+
 def main():
+    # 모드를 여러 개 줄 수 있습니다. 클론 직후 한 줄로 끝내기 위한 것입니다:
+    #     python3 generate_textures.py maze hall
+    # 각 모드가 자기 시드로 rng 를 갈아끼우므로 순서는 결과에 영향이 없고,
+    # 인자 없이 실행할 때 만들어지는 방(room) 텍스처도 건드리지 않습니다.
+    if len(sys.argv) > 1:
+        unknown = [a for a in sys.argv[1:] if a not in MODES]
+        if unknown:
+            sys.exit('모르는 모드: %s (가능: %s)'
+                     % (', '.join(unknown), ', '.join(MODES)))
+        for a in sys.argv[1:]:
+            MODES[a]()
+        return
     for i in range(N_WALL_SEGMENTS):
         save(mark(brick_wall(), i), 'wall_%02d.png' % i)
     save(tiles(), 'floor.png')

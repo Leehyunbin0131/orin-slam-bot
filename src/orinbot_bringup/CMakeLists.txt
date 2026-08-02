@@ -14,6 +14,7 @@ install(
   PROGRAMS
     scripts/battery_sim.py
     scripts/clock_throttle.py
+    scripts/people_sim.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
