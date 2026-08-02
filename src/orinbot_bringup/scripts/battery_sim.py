@@ -38,6 +38,8 @@ class BatterySim(Node):
         # Target dock pose (must match home_dock.pose in docking.yaml)
         p('dock_x', 1.0)
         p('dock_y', -3.60)
+        # **도킹 완료 시 로봇이 향하는 방향**입니다.
+        # 후진 도킹(reverse_dock)으로 바꾸면 +1.5708 로 뒤집어야 합니다.
         p('dock_yaw', -1.5708)
         # Contact tolerances
         p('contact_tolerance_lon', 0.048)     # Longitudinal tolerance [m]

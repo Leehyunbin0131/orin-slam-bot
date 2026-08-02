@@ -233,12 +233,15 @@ class AutoDock(Node):
     def _enter_power_save(self):
         if not self.power_save or self.saving:
             return
+        # 플래그를 **블록하기 전에** 세웁니다. 아래 서비스 호출이 몇 초 동안
+        # 막혀 있는 사이 다른 콜백이 들어와 언도킹을 걸면, Nav2 가 켜진 채로
+        # PAUSE 되어 그대로 멈춥니다.
+        self.saving = True
         self.get_logger().info('Charging started -- entering power save mode')
         self._call_empty(self.slam_pause)
         for name in self.extra_pause:
             self._call_empty(name)
         self._manage_nav2(ManageLifecycleNodes.Request.PAUSE, 'PAUSE')
-        self.saving = True
 
     def _exit_power_save(self):
         """Exit power save mode and restore SLAM, Nav2, and costmap in sequence."""

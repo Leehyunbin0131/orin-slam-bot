@@ -14,12 +14,13 @@ import time
 import rclpy
 import tf2_geometry_msgs  # noqa: F401  (PoseStamped transform registration)
 from action_msgs.msg import GoalStatus
-from geometry_msgs.msg import PoseStamped, TwistStamped
+from geometry_msgs.msg import PoseStamped, Quaternion, TwistStamped
 from nav2_msgs.action import DockRobot, NavigateToPose, UndockRobot
 from rclpy.action import ActionClient, ActionServer, CancelResponse, GoalResponse
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
+from std_srvs.srv import Empty
 
 # DockRobot.Feedback status values (matching opennav_docking spec)
 FB_NAV, FB_PERCEIVE, FB_CONTROL, FB_RETRY = 1, 2, 3, 5
@@ -46,8 +47,15 @@ class StagedDock(Node):
         p('dock_x', 1.0)
         p('dock_y', -3.60)
         p('dock_yaw', -1.5708)
-        # Distance from marker surface to final docked pose [m]
-        p('dock_distance', 0.294)
+        # 마커면에서 최종 도킹 자세까지 [m]
+        p('dock_distance', 0.224)
+        # 후진 도킹: 정렬은 도크를 마주 본 채로 하고, 회전점에서 180도 돌아
+        # 뒤로 들어갑니다. 충전 내내 카메라가 벽이 아니라 방을 보게 하려는
+        # 것입니다 — 벽 0.3 m 앞에서는 시각 오도메트리가 깨집니다.
+        p('reverse_dock', True)
+        # 180도 회전 지점까지의 거리 [m]. 제자리 회전에 외접반경 0.283 m 가
+        # 필요하므로 이보다 가까이서 돌면 패널을 칩니다.
+        p('rotate_distance', 0.30)
         # Distance from marker surface to approach staging pose [m]
         p('approach_distance', 0.65)
 
@@ -56,7 +64,9 @@ class StagedDock(Node):
         p('contact_lateral_budget', 0.015)
         # Yaw threshold limit [rad] for error anomaly monitoring
         p('yaw_tolerance', 0.0175)        # 1.0 deg
-        p('max_align_iters', 4)
+        p('max_align_iters', 6)
+        # 마커가 안 보일 때 한 번에 물러나는 거리 [m]
+        p('search_backoff', 0.15)
         # Minimum standoff distance from dock station
         p('min_standoff', 0.62)
 
@@ -69,6 +79,11 @@ class StagedDock(Node):
         p('measure_timeout', 5.0)
         p('undock_distance', 0.5)         # Backing out distance [m]
 
+        # 도킹 구간에 멈출 것들 (std_srvs/Empty). 실기에서 카메라 스트림을
+        # 끊는 서비스가 생기면 여기에 이름만 추가하면 됩니다.
+        p('slam_pause_services', ['/rtabmap/pause', '/vodom_tf_relay/pause'])
+        p('slam_resume_services', ['/rtabmap/resume', '/vodom_tf_relay/resume'])
+
         p('base_frame', 'base_footprint')
         p('odom_frame', 'odom')
         p('map_frame', 'map')
@@ -79,10 +94,15 @@ class StagedDock(Node):
         self.dock_id = g('dock_id')
         self.dock_pose = (g('dock_x'), g('dock_y'), g('dock_yaw'))
         self.D = g('dock_distance')
+        self.reverse = g('reverse_dock')
+        self.R = g('rotate_distance')
+        # 정렬 뒤 직진해서 멈출 지점 — 후진 도킹이면 회전점입니다.
+        self.stop_at = self.R if self.reverse else self.D
         self.A = g('approach_distance')
         self.yaw_tol = g('yaw_tolerance')
         self.budget = g('contact_lateral_budget')
         self.max_iters = int(g('max_align_iters'))
+        self.search_back = g('search_backoff')
         self.min_standoff = g('min_standoff')
         self.crab = g('crab_angle')
         self.w_rot = g('v_rotate')
@@ -95,6 +115,8 @@ class StagedDock(Node):
         self.odom = g('odom_frame')
         self.map_frame = g('map_frame')
         self.mpitch = g('marker_pitch')
+        self.slam_pause = [x for x in g('slam_pause_services') if x]
+        self.slam_resume = [x for x in g('slam_resume_services') if x]
 
         from tf2_ros import Buffer, TransformListener
         self.buf = Buffer()
@@ -173,7 +195,7 @@ class StagedDock(Node):
 
     def predict(self, fwd, lat, psi):
         """Predict expected contact lateral error [m] when proceeding straight."""
-        return lat - max(0.0, fwd - self.D) * math.sin(psi)
+        return lat - max(0.0, fwd - self.stop_at) * math.sin(psi)
 
     # ---------------- Maneuver ----------------
     def rotate(self, delta):
@@ -245,6 +267,20 @@ class StagedDock(Node):
                 handle.abort()
                 return r
 
+        # Nav2 의 각도를 믿으면 안 됩니다. 언도킹 직후에는 로봇이 이미 진입점
+        # 0.1 m 안에 있어 위치 조건만으로 목표가 즉시 성공 처리되고, 도크를
+        # 등진 채로 정렬이 시작돼 마커를 한 장도 못 봅니다. 여기서 지도
+        # 기준 방위를 직접 확인하고 오도메트리로 돌려 세웁니다.
+        self._face_dock()
+        self._restore_standoff()
+
+        # 여기서부터 지도 갱신과 시각 오도메트리를 얼립니다.
+        # 카메라가 벽을 0.3~0.9 m 앞에서 보며 제자리 회전과 크랩을 반복하는
+        # 구간이라 시각 오도메트리가 깨지고, 그 오차가 포즈 그래프에 그대로
+        # 들어갑니다 (실측: 도킹 한 사이클에 자세 오차 2 mm -> 935 mm).
+        # 도킹은 odom 기준이고 이동량도 1 m 미만이라 휠+IMU 로 충분합니다.
+        self._freeze_slam(True)
+
         # Stages 2-4: Measure -> Align yaw -> Crab correction -> Remeasure
         emit(FB_PERCEIVE)
         aligned = None
@@ -256,8 +292,15 @@ class StagedDock(Node):
                 return r
             m = self.measure()
             if m is None:
-                self.get_logger().warning('Dock marker not detected (attempt %d)' % (i + 1))
+                # 지도 좌표로 "충분히 멀다"고 판단하면 안 됩니다 — SLAM 오차가
+                # 수십 cm 면 실제로는 검출 절벽(0.55 m) 안쪽에 서 있게 됩니다
+                # (실측: 지도 0.70 m 인데 실제 0.53 m). 도크를 마주 본 상태이므로
+                # 뒤로 물러나면 마커가 화각에 다시 들어옵니다.
+                self.get_logger().warning(
+                    '마커 미검출 (%d회) — %.2f m 물러나 다시 봅니다'
+                    % (i + 1, self.search_back))
                 emit(FB_RETRY)
+                self.forward(-self.search_back)
                 continue
             fwd, lat, psi, n = m
             pred = self.predict(fwd, lat, psi)
@@ -283,6 +326,7 @@ class StagedDock(Node):
         if aligned is None:
             r.success, r.error_code = False, DockRobot.Result.FAILED_TO_DETECT_DOCK
             r.error_msg = 'Dock detection failed during alignment'
+            self._freeze_slam(False)     # 실패해도 반드시 되돌립니다
             handle.abort()
             return r
 
@@ -309,7 +353,7 @@ class StagedDock(Node):
                     if m is not None:
                         fwd, lat, psi, _ = m
 
-        run = max(0.0, fwd - self.D)
+        run = max(0.0, fwd - self.stop_at)
         self.get_logger().info(
             'Alignment complete -- standoff %.3f m / lat %+.1f mm / yaw %+.2f deg '
             '-> predicted contact %+.1f mm (budget %.0f mm). '
@@ -319,6 +363,18 @@ class StagedDock(Node):
         if run > 0.001:
             self.forward(run)
 
+        if self.reverse:
+            # 회전점에 섰습니다. 여기서 180도 돌고 짧게 후진해 들어갑니다.
+            # 회전은 마커가 아니라 오도메트리로 닫습니다 — 돌고 나면 마커가
+            # 뒤에 있어 볼 수 없습니다. 짧은 회전의 휠 오도메트리는 0.23도
+            # 분해능이고, 남은 후진이 0.08 m 라 흘러감은 mm 수준입니다.
+            back = max(0.0, self.R - self.D)
+            self.get_logger().info(
+                '회전점 도달 — 180도 회전 후 %.3f m 후진합니다' % back)
+            self.rotate(math.pi)
+            if back > 0.001:
+                self.forward(-back)
+
         r.success, r.error_code = True, 0
         handle.succeed()
         self.get_logger().info('Docking complete')
@@ -326,13 +382,75 @@ class StagedDock(Node):
 
     def _do_undock(self, handle):
         r = UndockRobot.Result()
-        self.get_logger().info('Undocking -- moving backward %.2f m' % self.undock_d)
-        self.forward(-self.undock_d)
+        # 도킹 때 얼렸더라도 auto_dock 의 절전 해제가 먼저 풀어 놓았을 수 있어
+        # 여기서 다시 겁니다. 후진 구간도 카메라가 벽을 보고 있습니다.
+        self._freeze_slam(True)
+        # 후진 도킹이면 로봇이 이미 벽을 등지고 있으므로 전진이 이탈입니다.
+        out = self.undock_d if self.reverse else -self.undock_d
+        self.get_logger().info(
+            '언도킹 — %s %.2f m' % ('전진' if out > 0 else '후진', abs(out)))
+        self.forward(out)
         self._stop()
+        self._freeze_slam(False)
         r.success, r.error_code = True, 0
         handle.succeed()
         self.get_logger().info('Undocking complete')
         return r
+
+    def _restore_standoff(self):
+        """도크에 너무 붙어 있으면 물러섭니다.
+
+        마커 3장이 다 보이는 한계가 0.55 m 부근이라, 앞선 시도가 실패해
+        로봇이 도크 앞에 박힌 채 남으면 이후 모든 시도가 검출조차 못 합니다.
+        """
+        try:
+            t = self.buf.lookup_transform(
+                self.map_frame, self.base, rclpy.time.Time()).transform
+        except Exception:                                  # noqa: BLE001
+            return
+        dx, dy, dyaw = self.dock_pose
+        d = math.hypot(t.translation.x - dx, t.translation.y - dy) + self.D
+        if d >= self.A:
+            return
+        back = self.A - d + 0.05
+        self.get_logger().info(
+            '도크에서 %.2f m 뿐이라 %.2f m 물러섭니다 (정렬에 %.2f m 필요)'
+            % (d, back, self.A))
+        self.forward(-back)
+
+    def _face_dock(self):
+        """도크를 마주 보도록 제자리에서 돌립니다 (지도 기준 방위 사용)."""
+        want = self.dock_pose[2]
+        for _ in range(3):
+            try:
+                t = self.buf.lookup_transform(
+                    self.map_frame, self.base, rclpy.time.Time()).transform
+            except Exception:                              # noqa: BLE001
+                time.sleep(0.3)
+                continue
+            err = wrap(want - yaw_of(t.rotation))
+            if abs(err) < math.radians(5.0):
+                return True
+            self.get_logger().info(
+                '도크 방향으로 %+.1f도 회전' % math.degrees(err))
+            self.rotate(err)
+            return True
+        self.get_logger().warning('map->base 조회 실패 — 방위 보정을 건너뜁니다')
+        return False
+
+    # ------------------------------------------------------------ 지도 동결
+    def _freeze_slam(self, on):
+        """도킹 구간 동안 포즈 그래프와 시각 오도메트리 보정을 멈춥니다."""
+        for name in (self.slam_pause if on else self.slam_resume):
+            cli = self.create_client(Empty, name)
+            if not cli.wait_for_service(timeout_sec=2.0):
+                self.get_logger().warning('%s 없음 — 건너뜁니다' % name)
+                continue
+            fut = cli.call_async(Empty.Request())
+            t0 = time.time()
+            while not fut.done() and time.time() - t0 < 3.0:
+                time.sleep(0.02)
+        self.get_logger().info('SLAM %s' % ('동결' if on else '재개'))
 
     def _goto_entry(self):
         """Navigate to approach staging pose."""
@@ -388,13 +506,17 @@ def _stamp0(msg):
 
 
 def _rot_pitch(q, pitch):
+    """마커 자세에 y축 회전을 곱합니다: q (x) q_pitch.
+
+    마커 광학 규약(z 가 마커 밖)에서 도크 규약(x 가 도크 정면)으로 옮기는
+    변환이라, 축을 틀리면 yaw 에 90도가 통째로 섞여 들어갑니다.
+    """
     ey, ew = math.sin(pitch / 2.0), math.cos(pitch / 2.0)
-    from geometry_msgs.msg import Quaternion
     return Quaternion(
-        x=q.x * ew + q.w * ey - q.z * 0.0,
-        y=q.y * ew + q.z * ey + q.x * 0.0,
-        z=q.z * ew - q.y * ey + q.w * 0.0,
-        w=q.w * ew - q.x * ey - q.y * 0.0)
+        x=q.x * ew - q.z * ey,
+        y=q.y * ew + q.w * ey,
+        z=q.z * ew + q.x * ey,
+        w=q.w * ew - q.y * ey)
 
 
 def main():

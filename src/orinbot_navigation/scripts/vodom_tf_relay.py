@@ -12,6 +12,7 @@ from nav_msgs.msg import Odometry
 from rclpy.duration import Duration
 from rclpy.node import Node
 from rclpy.time import Time
+from std_srvs.srv import Empty
 from tf2_ros import Buffer, TransformBroadcaster, TransformListener
 
 
@@ -65,6 +66,14 @@ class VodomTfRelay(Node):
         self.correction_q = np.array([0.0, 0.0, 0.0, 1.0])
         self.have_correction = False
 
+        # 도킹처럼 카메라가 벽을 코앞에서 보는 구간에서는 시각 오도메트리가
+        # 깨지므로 보정을 얼립니다. 얼린 동안에도 TF 는 계속 나가야 합니다 —
+        # 끊으면 map 과 base_footprint 가 다른 트리로 갈라집니다.
+        # 보정 자체가 천천히 변하는 값이라 짧은 구간은 휠+IMU 로 충분합니다.
+        self.frozen = False
+        self.create_service(Empty, '~/pause', self._srv_pause)
+        self.create_service(Empty, '~/resume', self._srv_resume)
+
         self.create_subscription(
             Odometry, self.get_parameter('visual_odom_topic').value,
             self.on_visual_odom, 10)
@@ -75,8 +84,22 @@ class VodomTfRelay(Node):
             % (self.visual_frame, self.wheel_frame, rate, self.tf_tolerance))
 
     # ------------------------------------------------------------------
+    def _srv_pause(self, _req, res):
+        if not self.frozen:
+            self.frozen = True
+            self.get_logger().info('시각 오도메트리 보정 동결')
+        return res
+
+    def _srv_resume(self, _req, res):
+        if self.frozen:
+            self.frozen = False
+            self.get_logger().info('시각 오도메트리 보정 재개')
+        return res
+
     def on_visual_odom(self, msg: Odometry):
         """Update T(vodom->odom) = T(vodom->base) * T(odom->base)^-1."""
+        if self.frozen:
+            return
         try:
             wheel = self.buffer.lookup_transform(
                 self.wheel_frame, self.base_frame,

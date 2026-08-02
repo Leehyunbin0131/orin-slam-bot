@@ -20,12 +20,21 @@ from launch_ros.substitutions import FindPackageShare
 
 
 def wait_for_topic(topic, timeout_s, label):
-    """Process that blocks until the specified topic receives its first message."""
+    """토픽에 첫 메시지가 올 때까지 막는 프로세스.
+
+    시간이 초과돼도 다음 단계는 진행합니다 — 무한정 멈춰 있는 것보다
+    일단 띄우고 로그로 원인을 보는 편이 낫습니다.
+
+    QoS 는 기본값(VOLATILE)으로 둡니다. /odom 은 VOLATILE, /map 은
+    TRANSIENT_LOCAL 이라 한쪽에 맞추면 다른 쪽이 매칭되지 않는데,
+    VOLATILE 구독자는 양쪽 모두에서 받을 수 있습니다.
+    """
     return ExecuteProcess(
-        cmd=['ros2', 'topic', 'echo', '--once', '--qos-reliability', 'reliable',
-             '--qos-durability', 'transient_local', topic],
+        cmd=['bash', '-c',
+             f'timeout {timeout_s} ros2 topic echo --once {topic} > /dev/null '
+             f'&& echo "[{label}] {topic} 확인" '
+             f'|| echo "[{label}] {topic} 대기 초과 — 그대로 진행합니다"'],
         output='screen',
-        timeout=timeout_s,
         name=label,
     )
 
