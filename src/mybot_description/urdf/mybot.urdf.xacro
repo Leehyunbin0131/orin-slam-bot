@@ -1,0 +1,229 @@
+<?xml version="1.0"?>
+<!--
+  mybot: 차동구동 이동로봇
+    - 중앙 양쪽에 구동륜 2개
+    - 앞/뒤에 각각 캐스터휠 2개 (총 4개)
+    - 전면에 Intel RealSense D435i (30도 하향)
+    - 상단에 RPLIDAR A2M12
+
+  실제 로봇 치수가 확정되면 아래 "치수 파라미터" 블록만 고치면 됩니다.
+  (config/controllers.yaml 의 wheel_separation / wheel_radius 도 같이 맞춰야 합니다)
+-->
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="mybot">
+
+  <!-- 시뮬레이션용 플러그인/센서를 포함할지 여부 -->
+  <xacro:arg name="sim_mode" default="true"/>
+  <!-- gz_ros2_control 에 넘길 컨트롤러 설정 파일 경로 -->
+  <xacro:arg name="controllers_file" default=""/>
+
+  <xacro:include filename="$(find mybot_description)/urdf/inertial_macros.xacro"/>
+  <xacro:include filename="$(find mybot_description)/urdf/d435i.urdf.xacro"/>
+  <xacro:include filename="$(find mybot_description)/urdf/rplidar_a2m12.urdf.xacro"/>
+  <xacro:include filename="$(find mybot_description)/urdf/mybot.ros2_control.xacro"/>
+
+  <!-- ======================= 치수 파라미터 ======================= -->
+  <!-- 40 cm 정육면체 섀시 -->
+  <xacro:property name="base_length" value="0.40"/>   <!-- 전후 길이 (x) -->
+  <xacro:property name="base_width"  value="0.40"/>   <!-- 좌우 폭  (y) -->
+  <xacro:property name="base_height" value="0.40"/>   <!-- 높이    (z) -->
+  <xacro:property name="base_mass"   value="10.0"/>
+
+  <xacro:property name="wheel_radius"     value="0.06"/>
+  <xacro:property name="wheel_width"      value="0.03"/>
+  <xacro:property name="wheel_separation" value="0.34"/> <!-- 좌우 구동륜 중심 간 거리 -->
+  <xacro:property name="wheel_mass"       value="0.5"/>
+
+  <!-- 캐스터 반지름을 구동륜의 절반으로 두면 섀시 바닥면이 자연스럽게 맞습니다 -->
+  <xacro:property name="caster_radius" value="${wheel_radius/2.0}"/>
+  <xacro:property name="caster_mass"   value="0.1"/>
+  <xacro:property name="caster_x"      value="${base_length/2.0 - 0.06}"/>
+  <xacro:property name="caster_y"      value="${base_width/2.0 - 0.06}"/>
+
+  <!-- 지면 대비 섀시 바닥 높이 = 캐스터 지름 -->
+  <xacro:property name="ground_clearance" value="${2*caster_radius}"/>
+  <!-- base_link(섀시 중심)의 지면 기준 높이 -->
+  <xacro:property name="base_z" value="${ground_clearance + base_height/2.0}"/>
+
+  <material name="chassis_grey"><color rgba="0.35 0.38 0.42 1.0"/></material>
+  <material name="wheel_black"><color rgba="0.1 0.1 0.1 1.0"/></material>
+  <material name="caster_silver"><color rgba="0.7 0.7 0.7 1.0"/></material>
+
+  <!-- ======================= 본체 ======================= -->
+
+  <!-- 지면에 투영된 기준 프레임 (Nav2 등이 사용) -->
+  <link name="base_footprint"/>
+
+  <joint name="base_joint" type="fixed">
+    <parent link="base_footprint"/>
+    <child link="base_link"/>
+    <origin xyz="0 0 ${base_z}" rpy="0 0 0"/>
+  </joint>
+
+  <link name="base_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry><box size="${base_length} ${base_width} ${base_height}"/></geometry>
+      <material name="chassis_grey"/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry><box size="${base_length} ${base_width} ${base_height}"/></geometry>
+    </collision>
+    <xacro:inertial_box mass="${base_mass}" x="${base_length}" y="${base_width}" z="${base_height}">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+    </xacro:inertial_box>
+  </link>
+
+  <!-- ======================= 구동륜 ======================= -->
+  <!-- reflect: 왼쪽 +1, 오른쪽 -1 -->
+  <xacro:macro name="drive_wheel" params="prefix reflect">
+    <link name="${prefix}_wheel_link">
+      <visual>
+        <origin xyz="0 0 0" rpy="${pi/2} 0 0"/>
+        <geometry><cylinder radius="${wheel_radius}" length="${wheel_width}"/></geometry>
+        <material name="wheel_black"/>
+      </visual>
+      <collision>
+        <origin xyz="0 0 0" rpy="${pi/2} 0 0"/>
+        <geometry><cylinder radius="${wheel_radius}" length="${wheel_width}"/></geometry>
+      </collision>
+      <xacro:inertial_cylinder mass="${wheel_mass}" radius="${wheel_radius}" length="${wheel_width}">
+        <origin xyz="0 0 0" rpy="${pi/2} 0 0"/>
+      </xacro:inertial_cylinder>
+    </link>
+
+    <joint name="${prefix}_wheel_joint" type="continuous">
+      <parent link="base_link"/>
+      <child link="${prefix}_wheel_link"/>
+      <origin xyz="0 ${reflect * wheel_separation/2.0} ${-base_height/2.0 - ground_clearance + wheel_radius}"
+              rpy="0 0 0"/>
+      <axis xyz="0 1 0"/>
+      <dynamics damping="0.05" friction="0.1"/>
+    </joint>
+
+    <gazebo reference="${prefix}_wheel_link">
+      <mu1>1.2</mu1>
+      <mu2>1.2</mu2>
+      <kp>1e6</kp>
+      <kd>10.0</kd>
+      <material>Gazebo/Black</material>
+    </gazebo>
+  </xacro:macro>
+
+  <xacro:drive_wheel prefix="left"  reflect="1"/>
+  <xacro:drive_wheel prefix="right" reflect="-1"/>
+
+  <!-- ======================= 캐스터 4개 ======================= -->
+  <!--
+    캐스터는 회전 조인트를 모델링하지 않고 마찰 없는 구(sphere)로 처리합니다.
+    실제 캐스터의 스위블 동역학은 차동구동 주행에 거의 영향이 없고,
+    조인트를 넣으면 시뮬레이션이 불안정해지기 쉽습니다.
+  -->
+  <xacro:macro name="caster_wheel" params="prefix x_reflect y_reflect">
+    <link name="${prefix}_caster_link">
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry><sphere radius="${caster_radius}"/></geometry>
+        <material name="caster_silver"/>
+      </visual>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry><sphere radius="${caster_radius}"/></geometry>
+      </collision>
+      <xacro:inertial_sphere mass="${caster_mass}" radius="${caster_radius}">
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+      </xacro:inertial_sphere>
+    </link>
+
+    <joint name="${prefix}_caster_joint" type="fixed">
+      <parent link="base_link"/>
+      <child link="${prefix}_caster_link"/>
+      <origin xyz="${x_reflect * caster_x} ${y_reflect * caster_y}
+                   ${-base_height/2.0 - caster_radius}" rpy="0 0 0"/>
+    </joint>
+
+    <gazebo reference="${prefix}_caster_link">
+      <mu1>0.0</mu1>
+      <mu2>0.0</mu2>
+      <kp>1e6</kp>
+      <kd>10.0</kd>
+      <material>Gazebo/Grey</material>
+    </gazebo>
+  </xacro:macro>
+
+  <xacro:caster_wheel prefix="front_left"  x_reflect="1"  y_reflect="1"/>
+  <xacro:caster_wheel prefix="front_right" x_reflect="1"  y_reflect="-1"/>
+  <xacro:caster_wheel prefix="rear_left"   x_reflect="-1" y_reflect="1"/>
+  <xacro:caster_wheel prefix="rear_right"  x_reflect="-1" y_reflect="-1"/>
+
+  <!-- ======================= D435i ======================= -->
+  <!--
+    전면 중앙, 섀시 상단에서 10 cm 아래. 15도 아래를 봅니다.
+
+    15도를 고른 이유 (뎁스 화각 87도 x 56.5도 기준):
+      앞면 기준 사각지대 0.40 m
+      2 m 앞에서 높이 0.84 m 까지, 3 m 앞에서 1.07 m 까지 보임
+    30도였을 때는 0.35 m 이상 높이가 거리와 무관하게 안 보여서
+    도킹 마커나 벽면 표식을 놓쳤습니다.
+
+    지면 기준 높이 = base_link(0.26) + (0.20 - 0.10) = 0.36 m
+    ROS 규약에서 y축 양의 회전(pitch +)이 아래쪽을 향하므로 +30도입니다.
+
+    주의: 아래로 기울어져 있으면 뎁스 영상을 그대로 LaserScan 으로 바꿀 수
+    없습니다. 바닥이 통째로 장애물로 찍히기 때문입니다
+    (카메라 높이 0.366m, 15도 -> 중심 광선이 약 1.37m 앞 바닥에 닿음).
+    그래서 코스트맵에는 포인트클라우드를 높이 필터와 함께 넣습니다.
+    (mybot_navigation/config/nav2_params.yaml 참고)
+  -->
+  <xacro:property name="camera_pitch" value="${radians(15)}"/>
+  <xacro:property name="camera_below_top" value="0.10"/>
+
+  <!-- 컬러 스트림 주기 [Hz]. 0 이면 끕니다.
+       실기 D435i 는 컬러/뎁스/IR 을 동시에 내보낼 수 있고, 컬러가 있으면
+       RTAB-Map 의 특징점 구별력이 올라가 잘못된 루프 클로저가 줄어듭니다.
+       시뮬에서는 gz-sim 의 렌더링 스레드가 따라오는지가 관건이라
+       여기서 조절하며 실측합니다 (scratchpad/stream_rates.py). -->
+  <xacro:property name="camera_color_rate" value="15"/>
+  <!-- infra1 주기 [Hz]. 0 이면 끕니다.
+       컬러 방식(RTAB-Map 이 color + aligned_depth 를 씀)에서는 쓰지 않습니다.
+       실기에서 어두운 환경 대응이 필요해지면 되살리세요. -->
+  <xacro:property name="camera_infra1_rate" value="0"/>
+
+  <xacro:sensor_d435i name="camera" parent="base_link"
+                      color_rate="${camera_color_rate}"
+                      infra1_rate="${camera_infra1_rate}">
+    <origin xyz="${base_length/2.0} 0 ${base_height/2.0 - camera_below_top}"
+            rpy="0 ${camera_pitch} 0"/>
+  </xacro:sensor_d435i>
+
+  <!-- ======================= RPLIDAR A2M12 ======================= -->
+  <!--
+    섀시 상단면에 직접 장착. 상단 중앙에서 전방으로 15 cm.
+
+    지면 기준: 케이스 바닥 0.46 m (= 섀시 상단), 스캔 평면 0.4908 m
+
+    카메라(0.36 m)보다 13 cm 높고, 카메라는 섀시 앞면에 붙어 있어
+    라이다의 360도 시야를 가리지 않습니다.
+  -->
+  <xacro:property name="lidar_forward" value="0.15"/>
+
+  <!-- 링크 원점이 스캔 평면이므로, 케이스 바닥을 상단면에 놓으려면
+       데이터시트상 오프셋 30.8mm 를 더해야 합니다. -->
+  <xacro:property name="lidar_plane_above_base" value="0.0308"/>
+
+  <xacro:rplidar_a2m12 name="laser" parent="base_link">
+    <origin xyz="${lidar_forward} 0 ${base_height/2.0 + lidar_plane_above_base}"
+            rpy="0 0 0"/>
+  </xacro:rplidar_a2m12>
+
+  <!-- ======================= 섀시 Gazebo 속성 ======================= -->
+  <gazebo reference="base_link">
+    <material>Gazebo/Grey</material>
+  </gazebo>
+
+  <!-- ======================= ros2_control ======================= -->
+  <xacro:mybot_ros2_control
+      sim_mode="$(arg sim_mode)"
+      controllers_file="$(arg controllers_file)"/>
+
+</robot>

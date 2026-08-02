@@ -1,0 +1,42 @@
+# colcon 산출물
+/build/
+/install/
+/log/
+
+# 어쩌다 하위 디렉터리에서 colcon 을 돌렸을 때 생기는 것들
+# (실제로 worlds/ 안에서 한 번 생겼습니다)
+**/build/
+**/install/
+**/log/
+
+__pycache__/
+*.py[cod]
+
+# RTAB-Map 데이터베이스. 기본 경로는 ~/.ros/mybot_rtabmap.db 라 보통
+# 저장소 밖이지만, database_path 를 여기로 돌렸을 때를 대비해 막아 둡니다.
+# 매핑 한 번에 분당 약 37 MB 씩 자랍니다.
+*.db
+*.db-journal
+*.db-wal
+
+# 측정 중 남는 것들
+*.log
+*.pgm
+/maps/
+
+# 편집기
+.vscode/
+.idea/
+*.swp
+*~
+
+# 커밋하는 것 — 생성물이지만 일부러 넣습니다
+#   worlds/room.sdf                     : Gazebo 가 직접 읽는 파일
+#   models/room_materials/.../*.png     : 고정 시드(20260801)로 결정적.
+#                                         받아서 바로 같은 월드가 되어야
+#                                         SLAM 측정을 비교할 수 있습니다.
+# 주의: generate_textures.py 의 N_WALL_SEGMENTS 를 바꾸면 28장이 전부
+# 다시 생성되어 13 MB 짜리 커밋이 됩니다. 자주 건드리지 마세요.
+
+# Claude Code 개인 로컬 설정 (팀과 공유하지 않음)
+.claude/settings.local.json

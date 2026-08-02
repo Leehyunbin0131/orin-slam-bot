@@ -1,0 +1,5 @@
+{
+  "enabledPlugins": {
+    "claude-ros2-skills@claude-ros2-skills": true
+  }
+}
