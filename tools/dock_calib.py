@@ -5,29 +5,21 @@
 
 무엇을 푸는 문제인가
 --------------------
-`track_marker_node` 가 내는 마커 자세는 OpenCV ArUco 규약이고,
-`SimpleChargingDock` 이 원하는 것은 "x 축이 도크 정면을 향하는" 자세입니다.
-그 사이를 메우는 고정 회전이 `external_detection_rotation_{roll,pitch,yaw}`
-입니다. 이 값이 틀리면 마커는 멀쩡히 검출되는데 도크 방향이 90도씩
-틀어져서, 로봇이 도크 옆구리를 향해 파고듭니다.
+검출기가 내는 마커 자세는 OpenCV ArUco 규약이고 `SimpleChargingDock` 은
+"x 축이 도크 정면"인 자세를 원합니다. 그 사이를 메우는 고정 회전이
+`external_detection_rotation_*` 이고, 틀리면 **마커는 멀쩡히 검출되는데
+로봇이 도크 옆구리로 파고듭니다.**
 
-플러그인 내부 계산은 이렇습니다 (simple_charging_dock.cpp).
+플러그인 계산 (simple_charging_dock.cpp):
 
-    R_dock = R_detected * R_ext      # R_ext 를 오른쪽에 곱함
-    dock_yaw = yaw(R_dock)           # roll/pitch 는 버림
+    R_dock = R_detected * R_ext      # 오른쪽 곱이라 기준 프레임과 무관하게
+    dock_yaw = yaw(R_dock)           # 결과 yaw 가 같은 상수만큼 돌아감
 
-`R_ext` 를 오른쪽에 곱하므로, 어느 기준 프레임에서 평가하든 결과 yaw 는
-같은 상수만큼 함께 돌아갑니다. 그래서 map 이 없어도 됩니다 —
-`base_footprint` 기준으로 풀면 됩니다.
+그래서 map 없이 `base_footprint` 기준으로 풀 수 있습니다.
 
-측정 자세
----------
-로봇을 도크 **정면**에 도크를 마주 보게 세웁니다. 그러면 도크의 yaw 는
-로봇 기준으로 정확히 0 이어야 합니다. 이 조건을 만족시키는 R_ext 를
-축 정렬 회전 24가지 중에서 찾습니다.
-
-정면이 아니어도 됩니다. 틀어진 각도를 알고 있으면 `--expect` 로 주세요
-(로봇 기준 도크 yaw, 라디안).
+측정 자세: 로봇을 도크 **정면**에 마주 보게 세웁니다 (그러면 도크 yaw 가 0
+이어야 합니다). 이 조건을 만족하는 R_ext 를 축 정렬 회전 24가지에서 찾습니다.
+정면이 아니어도 되며, 틀어진 각도를 알면 `--expect` 로 주세요(라디안).
 """
 
 import argparse

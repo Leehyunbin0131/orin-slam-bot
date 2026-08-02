@@ -14,15 +14,12 @@
 
 탐사 노드와의 충돌
 ------------------
-DockRobot 은 내부적으로 NavigateToPose 를 걸어 staging pose 로 갑니다.
-그런데 frontier_explorer 는 2초마다 자기 목표를 새로 보내므로, 그냥 두면
-도킹용 이동을 계속 밀어냅니다(preemption). 증상은 "도킹을 시작했는데
-로봇이 엉뚱한 데로 간다" 입니다.
-그래서 도킹을 시작하기 전에 `/exploration_enabled` 로 false 를 보내
-탐사를 멈추고, 충전이 끝나면 true 로 되돌립니다.
+DockRobot 은 내부적으로 NavigateToPose 로 staging pose 에 갑니다. 그런데
+frontier_explorer 가 2초마다 자기 목표를 보내 그 이동을 계속 밀어냅니다
+(증상: "도킹을 시작했는데 로봇이 엉뚱한 데로 간다"). 그래서 도킹 전에
+`/exploration_enabled` 로 false 를 보내고 충전이 끝나면 되돌립니다.
 
-주의: 이 노드는 잔량이 실제로 떨어져야 움직입니다. 시뮬레이션에서
-바로 시험하려면 battery_sim 의 잔량을 직접 낮추세요.
+주의: 잔량이 실제로 떨어져야 움직입니다. 바로 시험하려면 직접 낮추세요.
 
     ros2 topic pub --once /battery_sim/set_soc std_msgs/Float32 '{data: 0.1}'
 """

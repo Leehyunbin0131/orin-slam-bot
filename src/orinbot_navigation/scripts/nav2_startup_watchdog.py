@@ -3,39 +3,32 @@
 
 왜 필요한가
 -----------
-`lifecycle_manager` 가 서버를 순서대로 configure/activate 하는데, 그 과정의
-`change_state` 응답이 유실되면 이렇게 끝납니다.
+`lifecycle_manager` 의 `change_state` 응답이 유실되면 기동이 이렇게 끝납니다.
 
     [controller_server.rclcpp] failed to send response to
         /controller_server/change_state (timeout)
     [lifecycle_manager_navigation] Failed to bring up all requested nodes.
-        Aborting bringup.
 
-이러면 노드는 살아 있는데 전부 `inactive`/`unconfigured` 로 멈춰 있습니다.
-액션 서버는 존재하지만 모든 목표를 즉시 ABORT 하므로, 겉으로는 "Nav2 가
-떠 있는데 로봇이 안 움직인다" 로 보여 원인을 찾기 어렵습니다.
-
-이 PC 는 NIC 가 3개라 FastDDS 서비스 응답 매칭이 늦어 자주 납니다
+노드는 살아 있는데 전부 `inactive` 라 액션 서버는 보이면서 모든 목표를 즉시
+ABORT 합니다. 겉으로는 "Nav2 는 떠 있는데 로봇이 안 움직인다"로만 보입니다.
+이 개발 PC 는 NIC 가 3개라 FastDDS 서비스 매칭이 늦어 자주 납니다
 (`ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST` 로도 완전히 없어지지 않습니다).
-**실기(Orin Nano)는 코어당 성능이 이 PC 의 1/4~1/5 이라 더 잘 납니다.**
-그래서 수동 재기동에 기대지 않고 여기서 처리합니다.
+실기에서 더 잦은지는 아직 확인하지 못했습니다 — 2026-08-02 실행에서는
+재현되지 않았습니다.
 
 무엇을 하는가
 -------------
-`is_active` 를 주기적으로 물어보다가, `startup_timeout` 안에 활성이 안 되면
-`manage_nodes` 로 RESET 후 STARTUP 을 다시 겁니다. RESET 을 먼저 거는 이유는,
-일부 노드가 이미 활성인 상태에서 STARTUP 만 보내면 "already active" 로
-실패하기 때문입니다. 활성이 확인되면 이 노드는 종료합니다.
+`is_active` 를 물어보다가 `startup_timeout` 안에 활성이 안 되면 `manage_nodes`
+로 **RESET 후 STARTUP** 을 다시 겁니다. RESET 이 먼저인 이유는 일부 노드가
+이미 활성이면 STARTUP 만으로는 "already active" 로 실패하기 때문입니다.
+활성이 확인되면 이 노드는 종료합니다.
 
-구현 주의 두 가지
------------------
-- **타이머 콜백 안에서 `spin_until_future_complete` 를 부르면 안 됩니다.**
-  이미 executor 가 돌고 있어서 `RuntimeError: Executor is already spinning`
-  으로 죽습니다(실제로 그렇게 죽었습니다). 그래서 타이머 없이 main 에서
-  순차 루프로 돕니다.
-- **시계는 벽시계를 씁니다.** 기동 감시를 `use_sim_time` 에 묶으면 시뮬레이터가
-  아직 `/clock` 을 안 내보낼 때 시간이 흐르지 않아 영원히 대기합니다
-  (`robot_localization` 이 같은 이유로 멈추는 것과 같은 함정).
+구현 주의
+---------
+- **타이머 콜백 안에서 `spin_until_future_complete` 를 부르면 안 됩니다**
+  (`Executor is already spinning` 으로 죽습니다). main 에서 순차 루프로 돕니다.
+- **시계는 벽시계입니다.** `use_sim_time` 에 묶으면 시뮬레이터가 `/clock` 을
+  내보내기 전까지 시간이 흐르지 않아 영원히 대기합니다.
 """
 
 import sys

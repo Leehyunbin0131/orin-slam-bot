@@ -3,27 +3,19 @@
 
 왜 필요한가
 -----------
-`rgbd_odometry` 가 직접 TF 를 내보내면 영상 촬영 시각으로 스탬프가 찍히고
-영상 프레임 속도(10~15 Hz)로만 발행됩니다. 실측하면 평균 0.2초, 최악
-0.85초까지 뒤처집니다. Nav2 는 "지금" 시각으로 map -> odom 을 조회하므로
-이 낡은 링크 때문에 "Lookup would require extrapolation into the future"
-예외가 나고 목표가 취소됩니다.
+`rgbd_odometry` 가 직접 내보내는 TF 는 영상 촬영 시각으로 찍히고 프레임
+속도(10~15 Hz)로만 나옵니다 — 실측 평균 0.2초, 최악 0.85초 지연. Nav2 는
+"지금" 시각으로 map->odom 을 조회하므로 "Lookup would require extrapolation
+into the future" 가 나고 목표가 취소됩니다.
+RTAB-Map SLAM 노드는 `tf_tolerance` 로 이걸 해결하는데(현재보다 조금 앞선
+시각으로 발행) `rtabmap_odom` 에는 그 옵션이 없어 이 노드가 대신합니다.
 
-RTAB-Map 의 SLAM 노드는 이 문제를 `tf_tolerance` 로 해결합니다 — 보정
-TF 를 현재보다 조금 앞선 시각으로 찍어 발행하는 것입니다. 그런데
-`rtabmap_odom` 에는 같은 옵션이 없습니다. 그래서 이 노드가 그 역할을 합니다.
+vodom -> odom 은 누적 드리프트 보정이라 천천히 변합니다. 조금 오래된 값을
+재사용해도 실질적 영향이 없고, 빠르게 변하는 성분(odom -> base_footprint)은
+휠 오도메트리가 50 Hz 로 계속 갱신합니다.
 
-vodom -> odom 은 "누적 드리프트 보정"이라 천천히 변하는 값입니다. 따라서
-조금 오래된 값을 재사용해도 정확도에 실질적인 영향이 없습니다. 빠르게
-변하는 성분(odom -> base_footprint)은 휠 오도메트리가 50 Hz 로 계속
-최신 값을 내보내고 있습니다.
-
-계산
-----
     T(vodom->odom) = T(vodom->base) * T(odom->base)^-1
-
-앞의 항은 /vodom 오도메트리 메시지에서, 뒤의 항은 diff_drive_controller 가
-내보내는 TF 에서 가져옵니다.
+    앞 항은 /vodom 메시지에서, 뒤 항은 diff_drive_controller 의 TF 에서.
 """
 
 import numpy as np

@@ -12,27 +12,16 @@ nav2_bringup 의 navigation_launch.py 를 쓰지 않고 필요한 서버만 직�
 지도(/map)와 map->odom 변환은 RTAB-Map 이 제공하므로 AMCL 과 map_server 는
 띄우지 않습니다. slam.launch.py 를 먼저(또는 함께) 실행해야 합니다.
 
-컴포지션에 대해 — 현재 동작하지 않습니다 (use_composition:=true 는 실험용)
-------------------------------------------------------------------------
-서버 6개는 전부 rclcpp 컴포넌트로 등록돼 있어 형식상으로는 한 프로세스에
-담을 수 있습니다. 하지만 실제로 띄우면 코스트맵이 우리 설정을 못 받습니다.
-
-  원인: 컴포넌트를 올릴 때 launch_ros 는 YAML 을 읽어 "이름=값" 목록으로
-  풀어 LoadNode 서비스에 넘깁니다. 이 값들은 지정한 노드 하나에만 붙습니다.
-  그런데 controller_server / planner_server 는 자기 안에서
-  local_costmap / global_costmap 이라는 별도 노드를 또 만듭니다. 별도
-  프로세스로 띄울 때는 그 노드들이 프로세스의 --params-file 을 물려받지만,
-  컨테이너 안에서는 물려받을 명령줄이 없습니다.
-
-  실측: local_costmap 이 우리 플러그인(obstacle/stvl/inflation) 대신
-  기본값(static_layer)을 로드했고, obstacle_layer 는 구독 토픽이 비었으며,
-  이어서 컨테이너가 SIGSEGV(exit -11)로 죽었습니다.
-  Nav2 공식 navigation_launch.py 의 컴포지션 경로도 parameters=[...] 만
-  넘기므로 같은 한계를 가집니다.
-
-  고치려면 코스트맵에 파라미터를 전달할 다른 경로가 필요합니다
-  (예: 각 서버가 파일 경로를 파라미터로 받아 자기 코스트맵에 넘기도록
-  Nav2 쪽 수정). 그 전까지 기본값 false 로 두고 쓰지 마세요.
+컴포지션 — 현재 동작하지 않습니다 (use_composition:=true 는 실험용)
+-------------------------------------------------------------------
+**코스트맵이 우리 설정을 못 받습니다.** launch_ros 는 YAML 을 "이름=값"으로
+풀어 LoadNode 에 넘기는데, 이 값은 지정한 노드 하나에만 붙습니다. 그런데
+controller_server / planner_server 는 자기 안에서 local_costmap /
+global_costmap 이라는 별도 노드를 또 만들고, 컨테이너 안에는 그 노드들이
+물려받을 --params-file 이 없습니다.
+실측: local_costmap 이 우리 플러그인 대신 static_layer 를 로드했고 이어서
+컨테이너가 SIGSEGV 로 죽었습니다. Nav2 공식 런치도 같은 한계입니다.
+고치려면 Nav2 쪽 수정이 필요하므로 그 전까지 false 로 두세요.
 
 `twist_mux` 는 컴포넌트가 없어 어느 쪽이든 늘 별도 프로세스입니다.
 """
