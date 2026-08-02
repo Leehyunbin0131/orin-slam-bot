@@ -13,10 +13,37 @@
 # 틀어집니다. 대신 depth_image_proc 이 ROS 쪽에서 생성합니다.
 
 # ---- 시뮬레이션 시간 ----
-- ros_topic_name: "/clock"
+# **ROS 쪽 이름이 /clock 이 아니라 /clock_raw 입니다.**
+# gz 는 물리 스텝마다(1 ms = 997 Hz) 시계를 냅니다. use_sim_time 인 rclpy
+# 노드는 그 메시지마다 파이썬 콜백을 돌아 시계를 갱신하는데, 비용이
+# 메시지당 고정이라 주파수에 그대로 비례합니다 — Orin 에서 노드당 약
+# 113%p 로, 그것만으로 6코어를 다 씁니다. 실기에는 /clock 이 아예
+# 없으므로 순수한 시뮬레이션 인공물입니다.
+# 그래서 scripts/clock_throttle.py 가 이걸 받아 /clock 으로 솎아 냅니다
+# (기본 100 Hz, sim.launch.py 의 clock_rate 인자).
+- ros_topic_name: "/clock_raw"
   gz_topic_name: "/clock"
   ros_type_name: "rosgraph_msgs/msg/Clock"
   gz_type_name: "gz.msgs.Clock"
+  direction: GZ_TO_ROS
+
+# ---- 지상 진실 자세 (시뮬레이션 전용) ----
+# battery_sim.py 가 "충전 접점이 실제로 맞닿았는가" 를 판정하는 데 씁니다.
+# 실기에서는 BMS 가 전류로 직접 알므로 이 항목도, battery_sim 도 없습니다.
+#
+# SLAM 자세(map->base_footprint)를 쓰면 안 되는 이유: 접점 접촉은 물리적
+# 사실인데 SLAM 자세에는 중앙값 21 mm / 90% 46 mm 의 오차가 있습니다.
+# 실측에서 이것 때문에 도킹이 100 mm 앞에서 끝났습니다 — 충전이 시작됐다고
+# 잘못 판정하면 docking_server 의 접근 루프가 거기서 종료됩니다.
+# /world/room/dynamic_pose/info 를 TFMessage 로 변환하면 안 됩니다 —
+# 그 메시지에는 프레임 이름을 담는 header.data 가 없어 frame_id 가 전부
+# 빈 문자열로 나옵니다 (실측 확인). URDF 의 OdometryPublisher 를 씁니다.
+# gz 쪽 이름은 OdometryPublisher 의 <odom_topic> 값 그대로입니다.
+# 모델 이름으로 네임스페이스가 붙지 않습니다 (/model/orinbot/... 아님).
+- ros_topic_name: "/ground_truth/odom"
+  gz_topic_name: "/ground_truth/odom"
+  ros_type_name: "nav_msgs/msg/Odometry"
+  gz_type_name: "gz.msgs.Odometry"
   direction: GZ_TO_ROS
 
 # ---- RPLIDAR A2M12 ----

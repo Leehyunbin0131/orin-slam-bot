@@ -59,6 +59,10 @@ def generate_launch_description():
         DeclareLaunchArgument('use_pointcloud', default_value='true',
                               description='depth_image_proc 로 포인트클라우드 생성 '
                                           '(Nav2 코스트맵이 이걸 장애물 관측원으로 씁니다)'),
+        DeclareLaunchArgument('clock_rate', default_value='100.0',
+                              description='ROS 로 내보낼 /clock 주파수 [Hz]. 0 이면 '
+                                          'gz 원본(997 Hz)을 그대로 통과시킵니다. '
+                                          'scripts/clock_throttle.py 주석 참고'),
     ]
 
     # ---------------- robot_description ----------------
@@ -185,6 +189,18 @@ def generate_launch_description():
         condition=IfCondition(LaunchConfiguration('use_pointcloud')),
     )
 
+    # gz 의 /clock(997 Hz)을 솎아 /clock 으로 다시 냅니다.
+    # 그대로 두면 use_sim_time 인 rclpy 노드가 시계 갱신에만 CPU 를 태웁니다
+    # (Orin 실측 환산 노드당 약 113%p). 자세한 근거는 스크립트 주석 참고.
+    clock_throttle = Node(
+        package='orinbot_bringup',
+        executable='clock_throttle.py',
+        name='clock_throttle',
+        output='screen',
+        parameters=[{'rate': LaunchConfiguration('clock_rate'),
+                     'use_sim_time': False}],
+    )
+
     # ---------------- 컨트롤러 스포너 ----------------
     jsb_spawner = Node(
         package='controller_manager',
@@ -262,6 +278,7 @@ def generate_launch_description():
         gz_resource_path,
         gz_sim,
         robot_state_publisher,
+        clock_throttle,
         spawn_robot,
         gz_bridge,
         pointcloud_container,

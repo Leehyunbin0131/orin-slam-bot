@@ -8,4 +8,10 @@ install(
   DESTINATION share/${PROJECT_NAME}
 )
 
+install(
+  PROGRAMS
+    scripts/clock_throttle.py
+  DESTINATION lib/${PROJECT_NAME}
+)
+
 ament_package()
