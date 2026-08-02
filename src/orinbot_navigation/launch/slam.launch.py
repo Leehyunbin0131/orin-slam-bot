@@ -83,9 +83,10 @@ def generate_launch_description():
             'reg_strategy', default_value='2',
             description='루프 클로저 검증 방식. 0=영상만, 1=ICP만, 2=영상+ICP'),
         DeclareLaunchArgument(
-            'memory_thr', default_value='300',
+            'memory_thr', default_value='3000',
             description='RTAB-Map 작업 메모리에 유지할 노드 수 상한. '
-                        '0 이면 무제한(메모리가 계속 자람)'),
+                        '0 이면 무제한. 300 은 /map 을 파괴합니다 — '
+                        '아래 주석 참고'),
         DeclareLaunchArgument(
             'detection_rate', default_value='2.0',
             description='rtabmap 이 지도 노드를 추가하는 최대 주기 [Hz]. '
@@ -211,31 +212,31 @@ def generate_launch_description():
         'Reg/Force3DoF': 'true',
         'RGBD/OptimizeMaxError': '3.0',
 
-        # --- 노드 생성 빈도 ---
-        # --- 메모리 상한 (Jetson Orin Nano Super 8GB 통합메모리 대비) ---
-        # 상한이 없으면 작업 메모리가 계속 자랍니다.
-        # 실측: 한 세션 안에서 834 MB -> 1491 MB, 장시간 뒤 5 GB 까지 갔습니다.
-        # Orin 은 CPU/GPU 가 8 GB 를 공유하므로 이대로는 못 올립니다.
+        # --- 작업 메모리 노드 수 상한 ---
+        # 초과분은 장기 기억(디스크 DB)으로 내려갑니다. 상한이 없으면 계속
+        # 자랍니다 (실측 834 -> 1491 MB, 장시간 뒤 5 GB).
         #
-        # MemoryThr: 작업 메모리(RAM)에 유지할 노드 수 상한.
-        # 초과분은 장기 기억(디스크 DB)으로 내려가고, 그 근처로 돌아오면
-        # 다시 올라옵니다. 루프 클로저는 계속 동작합니다.
-        # 방 하나 규모(10x8m)에는 300 이면 넉넉합니다. 넓은 곳을 매핑하면
-        # 늘려야 하고, 그만큼 RAM 을 더 씁니다.
+        # **낮추면 `/map` 이 깨집니다.** 장기 기억으로 내려간 노드의 격자는
+        # 발행되는 지도에서도 사라집니다. 300 에서 1733 개 중 301 개만 남아
+        # **이미 그린 구역이 미탐색으로 되돌아갔고**, 그 가짜 경계를 프론티어로
+        # 잡아 탐사가 끝나지 않았습니다 (방 탐사 541초, 3000 에서는 158초).
+        # 겉으로는 "이미 간 곳을 자꾸 다시 간다"로만 보입니다.
+        #
+        # 3000 은 방 규모에서는 사실상 무제한이고 홀/사무실에서만 걸립니다.
+        # 메모리를 줄여야 하면 여기가 아니라 Grid/3D 를 보세요 — 그쪽이
+        # 2656 -> 914 MB 로 훨씬 크고 지도를 망가뜨리지 않습니다.
         'Rtabmap/MemoryThr': ParameterValue(
             LaunchConfiguration('memory_thr'), value_type=str),
-        # 지도 노드를 추가하는 최대 주기 [Hz].
-        # 자원 절감 손잡이 중 가장 효과가 큽니다. 실측 (같은 월드, 둘 다
-        # 새로 띄운 상태, 0.60m 통로 왕복 + 4경유지 주행):
+        # 지도 노드 추가 주기 [Hz]. 자원 절감 손잡이 중 효과가 가장 큽니다.
+        # 실측 (같은 월드, 각각 새로 띄움):
         #
         #            rtabmap CPU  메모리   자세오차 중앙값  90%값   map->odom 최대보정
         #   2.0 (현행)   25.1 %p   552 MB     0.021 m    0.046 m      0.110 m
         #   1.0          15.5 %p   446 MB     0.027 m    0.052 m      0.188 m
         #
-        # 2.0 을 유지하는 이유: 이 로봇의 통로 통과 여유가 SLAM 자세 오차에서
-        # 나옵니다. 폭 0.70 m 통로의 편측 여유가 67 mm 인데 90%값이 46 -> 52 mm
-        # 로 오르면 그 예산을 직접 깎아먹습니다. Orin 에서 CPU 가 정말 모자랄
-        # 때만 detection_rate:=1.0 으로 내리세요.
+        # 2.0 을 유지하는 이유: 통로 통과 여유가 SLAM 자세 오차에서 나옵니다.
+        # 폭 0.70 m 통로의 편측 여유 67 mm 인데 90%값이 46 -> 52 mm 로 오르면
+        # 그 예산을 직접 깎습니다. CPU 가 정말 모자랄 때만 내리세요.
         'Rtabmap/DetectionRate': ParameterValue(
             LaunchConfiguration('detection_rate'), value_type=str),
         'RGBD/LinearUpdate': '0.05',

@@ -93,13 +93,24 @@ def generate_launch_description():
                         '(1.0 이면 rtabmap CPU -38%, 메모리 -106MB). '
                         '대가는 정확도 — slam.launch.py 의 실측표 참고'),
         DeclareLaunchArgument(
-            'memory_thr', default_value='300',
+            'memory_thr', default_value='3000',
             description='RTAB-Map 작업 메모리에 유지할 노드 수 상한. '
-                        '0 이면 무제한(메모리가 계속 자람)'),
+                        '0 이면 무제한. 낮추면 장기 기억으로 내려간 노드의 '
+                        '격자가 /map 에서 사라집니다 — slam.launch.py 주석 참고'),
         DeclareLaunchArgument('gui', default_value='true',
                               description='Gazebo GUI'),
-        # 카메라가 30도 아래를 보므로 뎁스를 LaserScan 으로 눌러 쓸 수 없습니다.
-        # 코스트맵이 높이 필터와 함께 포인트클라우드를 직접 씁니다.
+        DeclareLaunchArgument(
+            'world', default_value='room.sdf',
+            description='orinbot_bringup/worlds/ 아래의 월드 파일. '
+                        'room(기준선) / maze(협소) / hall(대형) / office(실전형)'),
+        # 월드를 바꿀 때는 이것도 같이 바꾸세요. 한 DB 에 서로 다른 월드를
+        # 이어 붙이면 RTAB-Map 이 이전 월드의 포즈 그래프 위에 매핑합니다.
+        DeclareLaunchArgument(
+            'database_path', default_value='~/.ros/orinbot_rtabmap.db',
+            description='RTAB-Map DB 경로. 월드마다 다르게 두세요'),
+        # 카메라가 15도 아래를 보므로 뎁스를 LaserScan 으로 눌러 쓸 수 없습니다
+        # (바닥이 통째로 장애물이 됩니다). 코스트맵이 높이 필터와 함께
+        # 포인트클라우드를 직접 씁니다.
         DeclareLaunchArgument('use_pointcloud', default_value='true',
                               description='뎁스 포인트클라우드 (코스트맵 장애물 관측원)'),
         DeclareLaunchArgument(
@@ -134,6 +145,7 @@ def generate_launch_description():
         launch_arguments={
             'use_rviz': 'false',        # RViz 는 아래 네비게이션용 설정으로 하나만
             'gui': LaunchConfiguration('gui'),
+            'world': LaunchConfiguration('world'),
             # 포인트클라우드는 시각화 전용인데 120 MB/s 를 먹습니다.
             # SLAM/Nav2 는 뎁스 영상과 /scan 만 쓰므로 꺼 둡니다.
             'use_pointcloud': LaunchConfiguration('use_pointcloud'),
@@ -154,6 +166,7 @@ def generate_launch_description():
             # detection_rate:=1.0 을 줘도 조용히 무시됩니다.
             'detection_rate': LaunchConfiguration('detection_rate'),
             'memory_thr': LaunchConfiguration('memory_thr'),
+            'database_path': LaunchConfiguration('database_path'),
         }.items(),
     )])
 

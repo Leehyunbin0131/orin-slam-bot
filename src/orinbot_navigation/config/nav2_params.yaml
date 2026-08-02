@@ -1,10 +1,10 @@
-# Nav2 설정 — orinbot (차동구동, D435i 만 탑재)
+# Nav2 설정 — orinbot (차동구동, D435i + RPLIDAR A2M12)
 #
 # Nav2 기본값에서 바꾼 핵심:
 #   - robot_base_frame: base_link -> base_footprint
 #   - robot_radius 대신 footprint (400x400mm 사각) — 원 근사는 좁은 통로를 막음
-#   - 관측원: /scan (RPLIDAR A2M12) + /camera/depth/points (D435i, 30도 하향)
-#   - VSLAM 입력은 컬러가 아니라 infra1 (실기에서 글로벌 셔터)
+#   - 관측원: /scan (RPLIDAR, 평면 0.49 m) + /camera/depth/points (D435i, 15도 하향)
+#   - 전역 플래너는 SmacPlanner2D (NavFn 은 벽에서 떨어뜨릴 손잡이가 없음)
 #   - enable_stamped_cmd_vel: true  (diff_drive_controller 가 TwistStamped 를 받음)
 #   - 속도 상한을 controllers.yaml 의 제한 안쪽으로 맞춤
 #
@@ -117,11 +117,27 @@ controller_server:
         enabled: true
         cost_power: 1
         cost_weight: 4.0
+      # === threshold_to_consider (2026-08-02 실측으로 찾은 결함) ===
+      # 비평자를 켜고 끄는 판정이 **목표까지의 직선거리**입니다 — 남은 경로
+      # 길이를 전혀 보지 않습니다 (mppi/tools/utils.hpp:242).
+      #
+      # 그래서 **벽 하나 너머에 목표가 있으면**(직선은 가까운데 경로는 크게
+      # 우회) 경로 추종 비평자가 전부 꺼지고 목표 쪽 직선 인력만 남아 로봇이
+      # 벽으로 밀립니다. 증상: 한 지점에서 못 빠져나오다 몇 분 뒤 갑자기 통과
+      # (탐사가 그 목표를 포기하는 순간), 경로와 반대쪽으로 꺾음.
+      # 미로에서 심한 이유는 셀 간격이 0.85 m 라 옛 문턱 1.4 m 가 주변 8칸을
+      # 다 덮기 때문입니다. 개활지는 목표가 몇 m 밖이라 안 걸렸습니다.
+      #
+      # 대책: 경로 추종은 목표 허용오차(xy_goal_tolerance 0.20) 언저리까지만
+      # 살아 있으면 되므로 문턱을 그 바로 위로 낮춥니다. 직선거리 판정 자체는
+      # 그대로라 원리적 해결은 아니지만, 남는 구간은 이미 도착 판정 범위입니다.
       GoalCritic:
         enabled: true
         cost_power: 1
         cost_weight: 5.0
-        threshold_to_consider: 1.4
+        # 1.4 -> 0.5. 이 값이 클수록 "목표 쪽 직선 인력"이 먼 거리에서부터
+        # 켜집니다. 벽 너머 목표에서 로봇을 벽으로 미는 힘이 이것입니다.
+        threshold_to_consider: 0.5
       GoalAngleCritic:
         enabled: true
         cost_power: 1
@@ -158,7 +174,9 @@ controller_server:
         cost_weight: 14.0
         max_path_occupancy_ratio: 0.05
         trajectory_point_step: 4
-        threshold_to_consider: 0.5
+        # 0.5 -> 0.25. 가중치 14.0 으로 가장 강한 비평자라, 이게 꺼지면
+        # 경로를 따라가게 하는 힘이 사실상 사라집니다. (위 설명 참고)
+        threshold_to_consider: 0.25
         offset_from_furthest: 20
         use_path_orientations: false
       PathFollowCritic:
@@ -166,7 +184,9 @@ controller_server:
         cost_power: 1
         cost_weight: 5.0
         offset_from_furthest: 5
-        threshold_to_consider: 1.4
+        # 1.4 -> 0.3. 셀 간격 0.85 m 인 미로에서 1.4 m 는 주변 8칸을 전부
+        # 덮어, 목표가 이웃 칸에 있기만 하면 경로 추종이 꺼졌습니다.
+        threshold_to_consider: 0.3
       PathAngleCritic:
         enabled: true
         cost_power: 1
@@ -275,7 +295,8 @@ local_costmap:
           inf_is_valid: false
           voxel_filter: false
           clear_after_reading: true
-          # D435i 뎁스 화각 (87 x 58도). STVL 은 이 절두체 안쪽을
+          # D435i 뎁스 화각. 424x240 렌더 기준 87 x 56.5도
+          # (58도는 데이터시트 값). STVL 은 이 절두체 안쪽을
           # "지금 보고 있는 영역"으로 보고 소거 판단에 씁니다.
           horizontal_fov_angle: 1.518
           vertical_fov_angle: 1.012
@@ -398,7 +419,8 @@ global_costmap:
           inf_is_valid: false
           voxel_filter: false
           clear_after_reading: true
-          # D435i 뎁스 화각 (87 x 58도). STVL 은 이 절두체 안쪽을
+          # D435i 뎁스 화각. 424x240 렌더 기준 87 x 56.5도
+          # (58도는 데이터시트 값). STVL 은 이 절두체 안쪽을
           # "지금 보고 있는 영역"으로 보고 소거 판단에 씁니다.
           horizontal_fov_angle: 1.518
           vertical_fov_angle: 1.012
@@ -428,9 +450,44 @@ global_costmap:
 planner_server:
   ros__parameters:
     expected_planner_frequency: 20.0
-    planner_plugins: ["GridBased"]
+    # 두 개를 등록해 두고 BT 의 PlannerSelector 로 갈아끼울 수 있게 합니다.
+    # (트리에 PlannerSelector 노드가 이미 있고 default_planner="GridBased")
+    planner_plugins: ["GridBased", "NavFn"]
     costmap_update_timeout: 1.0
+
+    # === 왜 NavFn 대신 Smac2D 인가 (2026-08-02) ===
+    # 목표: 경로가 벽에서 최대한 떨어지게 하기.
+    #
+    # NavFn 은 그걸 조절할 수단이 **없습니다**. 비용 변환이 컴파일 상수입니다
+    # (nav2_navfn_planner/navfn.hpp):
+    #     #define COST_NEUTRAL 50
+    #     #define COST_FACTOR  0.8      // 비용 = 50 + 0.8 * 코스트맵값
+    # 팽창 파라미터로 우회해 보려 했으나 효과가 없습니다 — 통로 0.85 m 에서
+    # 중앙과 10 cm 편심의 비용 차이가 cost_scaling_factor 10 일 때 45.7,
+    # 3 일 때 45.0 으로 사실상 같습니다. 중앙 선호 압력이 안 바뀝니다.
+    #
+    # SmacPlanner2D 에는 `cost_travel_multiplier` 가 있습니다. A* 탐색이
+    # 비용 높은(=벽에 가까운) 셀을 얼마나 기피할지 직접 정하는 값이라,
+    # 이게 원하던 손잡이입니다.
     GridBased:
+      plugin: "nav2_smac_planner::SmacPlanner2D"
+      tolerance: 0.5                    # NavFn 과 같게 두어 비교 가능하게
+      allow_unknown: true
+      max_iterations: 1000000
+      max_on_approach_iterations: 1000
+      max_planning_time: 2.0
+      # 기본 2.0 -> 4.0. 클수록 벽에서 멀어지지만 경로가 길어지고
+      # 탐색 시간도 늘어납니다. 좁은 통로에서는 어차피 중앙밖에 없으므로
+      # 경로 길이 손해는 코너에서만 생깁니다.
+      cost_travel_multiplier: 4.0
+      # 코스트맵을 줄여 탐색을 빠르게 하는 옵션인데, 통로 폭 0.85 m 에
+      # 격자 0.05 m 라 해상도를 낮추면 통로가 사라집니다. 끄고 씁니다.
+      downsample_costmap: false
+      use_final_approach_orientation: false
+
+    # 에스컬레이션용 예비. 실패가 반복될 때 PlannerSelector 로 이쪽을
+    # 지정하면 전혀 다른 탐색(퍼텐셜 하강)으로 다시 시도할 수 있습니다.
+    NavFn:
       plugin: "nav2_navfn_planner::NavfnPlanner"
       tolerance: 0.5
       use_astar: false
