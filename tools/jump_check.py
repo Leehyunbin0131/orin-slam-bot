@@ -1,11 +1,6 @@
-"""로봇이 RViz 에서 튀는 원인을 가른다.
+"""TF 중복 발행 여부 및 좌표계 점프(Jump) 감지 스크립트.
 
-  1) odom -> base_footprint 를 두 노드가 발행하고 있는가 (TF 충돌)
-  2) map -> odom 이 얼마나 자주, 얼마나 크게 점프하는가 (루프 클로저 보정)
-  3) odom -> base_footprint 자체가 튀는가 (EKF/오도메트리 문제)
-
-map->odom 이 튄다 = SLAM 이 뒤늦게 위치를 고치는 것 (오도메트리가 나쁠수록 큼)
-odom->base 가 튄다 = 오도메트리 자체가 망가진 것
+    python3 jump_check.py [측정초]
 """
 import math
 import sys

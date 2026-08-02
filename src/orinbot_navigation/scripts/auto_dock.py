@@ -1,27 +1,20 @@
 #!/usr/bin/env python3
-"""잔량이 떨어지면 스스로 충전 도크로 돌아가고, 다 차면 다시 나갑니다.
+"""배터리 상태를 모니터링하여 자동 충전 도킹 및 언도킹을 수행하는 노드.
 
-    /battery_state --> [ 감시 ] --> /dock_robot   (opennav_docking)
-                                --> /undock_robot
+    /battery_state --> [ AutoDock ] --> /dock_robot   (opennav_docking)
+                                    --> /undock_robot
 
-상태
-----
-    IDLE      : 잔량만 봅니다. 주행은 다른 노드(탐사/사용자)가 합니다.
-    RETURNING : DockRobot 진행 중. staging pose 까지의 이동도 이 액션이
-                직접 합니다.
-    CHARGING  : 붙었습니다. resume_soc 까지 기다립니다.
-    UNDOCKING : UndockRobot 진행 중.
+상태 구조
+---------
+    IDLE      : 배터리 잔량 모니터링 및 대기 상태
+    RETURNING : 충전 도크 복귀 액션(DockRobot) 수행 중
+    CHARGING  : 도킹 완료 및 충전 수행 중 (resume_soc 도달 시까지 대기)
+    UNDOCKING : 언도킹 액션(UndockRobot) 수행 중
 
-탐사 노드와의 충돌
-------------------
-DockRobot 은 내부적으로 NavigateToPose 로 staging pose 에 갑니다. 그런데
-frontier_explorer 가 2초마다 자기 목표를 보내 그 이동을 계속 밀어냅니다
-(증상: "도킹을 시작했는데 로봇이 엉뚱한 데로 간다"). 그래서 도킹 전에
-`/exploration_enabled` 로 false 를 보내고 충전이 끝나면 되돌립니다.
-
-주의: 잔량이 실제로 떨어져야 움직입니다. 바로 시험하려면 직접 낮추세요.
-
-    ros2 topic pub --once /battery_sim/set_soc std_msgs/Float32 '{data: 0.1}'
+탐사 제어
+---------
+도킹 동작 수행 중 프론티어 탐사가 목표 지점을 갱신하는 것을 방지하기 위해
+도킹 시작 시 `/exploration_enabled`를 false로 전환하고 충전/언도킹 완료 시 원복합니다.
 """
 
 import threading
@@ -50,37 +43,33 @@ class AutoDock(Node):
 
         p('enabled', True)
         p('dock_id', 'home_dock')
-        # 이 잔량 밑으로 내려가면 복귀를 시작합니다. 0.20 으로 둔 이유:
-        # 방 대각선이 약 13 m 이고 복귀에 넉넉히 2분이 걸린다고 보면
-        # 5% 면 충분하지만, 도킹 실패 후 재시도(최대 3회 x 60초)까지
-        # 감당해야 해서 여유를 크게 잡았습니다.
+        # 복귀 시작 배터리 잔량 임계값 (20%)
         p('low_soc', 0.20)
-        # 이 잔량이 되면 다시 나갑니다. 만충(1.0)을 기다리면 충전 전류가
-        # taper 구간에서 줄어 마지막 5% 에 전체 시간의 3분의 1을 씁니다.
+        # 작업 재개 배터리 잔량 임계값 (90%)
         p('resume_soc', 0.90)
-        # 도킹이 실패했을 때 다시 걸기까지의 간격 [s]
+        # 도킹 실패 시 재시도 대기 시간 [초]
         p('retry_delay', 30.0)
         p('max_attempts', 5)
-        # 잔량이 임계값 근처에서 떨릴 때 상태가 왔다 갔다 하지 않도록
+        # 잔량 히스테리시스 (상태 진동 방지)
         p('soc_hysteresis', 0.03)
-        # 충전이 끝나면 자동으로 도크에서 빠져나올지
+        # 충전 완료 시 자동 언도킹 수행 여부
         p('auto_undock', True)
         p('pause_exploration', True)
-        # 충전이 끊겼다고 판정하기 전에 연속으로 확인할 틱 수.
-        # /battery_state 가 1 Hz 라 도킹 직후 한두 틱은 아직 충전
-        # 상태가 안 실려 옵니다.
+        # 충전 해제 판정 전 연속 확인 틱 수 (/battery_state 1 Hz 고려)
         p('charge_grace_ticks', 3)
 
-        # --- 충전 중 절전 ---
-        # 도크에 붙어 있는 동안은 인지·항법이 필요 없습니다. 실기(Orin)는
-        # 6코어뿐이고 충전 전력도 유한하므로, 놀고 있는 노드를 재우면
-        # 충전이 그만큼 빨라지고 발열도 줄어듭니다.
-        #
-        # **죽이지 말고 멈춰야 합니다.** rtabmap 을 죽였다 살리면 DB 를
-        # 다시 읽고 재위치추정을 해야 하는데, 실측상 localization 모드는
-        # CPU 25.1 -> 33.9 %p / 메모리 552 -> 604 MB 로 오히려 더 씁니다.
-        # pause 는 포즈 그래프를 램에 둔 채 연산만 멈춥니다
-        # (그래서 CPU 만 벌고 메모리는 그대로입니다).
+        # --- 충전 중 절전 관리 ---
+        # 충전 중 인지 및 항법 노드를 정지시켜 리소스 사용량을 절감합니다.
+        # 노드를 파괴하지 않고 Lifecycle PAUSE / Service Pause로 제어합니다.
+        p('power_save', True)
+        p('nav2_manager', '/lifecycle_manager_navigation')
+        p('slam_pause_service', '/rtabmap/pause')
+        p('slam_resume_service', '/rtabmap/resume')
+        p('extra_pause_services', [''])
+        p('extra_resume_services', [''])
+        # 복귀 후 Nav2 코스트맵 갱신 대기 타임아웃 [초]
+        p('resume_timeout', 60.0)
+        p('costmap_topic', '/global_costmap/costmap')
         p('power_save', True)
         p('nav2_manager', '/lifecycle_manager_navigation')
         p('slam_pause_service', '/rtabmap/pause')
@@ -121,11 +110,7 @@ class AutoDock(Node):
         self.goal_handle = None
         self.not_charging_ticks = 0
         self.saving = False           # 절전 중인가
-        # 상태 기계 재진입 방지.
-        # 멀티스레드 실행기에서는 타이머 콜백이 겹쳐 돕니다. 절전 해제는
-        # 서비스 응답을 기다리며 수 초 블록하는데, 그 사이 타이머가 다시
-        # 들어와 언도킹을 여러 번 걸었습니다 (실측: UndockRobot 4회 발행,
-        # 로봇이 그만큼 더 후진). 한 번에 하나만 돌게 잠급니다.
+        # 멀티스레드 환경 상태 기계 중복 실행 방지 락
         self._busy = threading.Lock()
         self.costmap_seen = False
 
@@ -137,9 +122,7 @@ class AutoDock(Node):
         self.dock_ac = ActionClient(self, DockRobot, 'dock_robot')
         self.undock_ac = ActionClient(self, UndockRobot, 'undock_robot')
         self.create_subscription(BatteryState, '/battery_state', self._battery, 10)
-        # 탐사 노드가 구독합니다. TRANSIENT_LOCAL 이 아니라 그냥
-        # 상태가 바뀔 때마다 보냅니다 — 늦게 뜬 탐사 노드는 기본값
-        # (활성)으로 시작하므로 놓쳐도 안전한 쪽으로 틀립니다.
+        # 탐사 노드 제어용 발행자
         self.explore_pub = self.create_publisher(Bool, '/exploration_enabled', 10)
 
         self.create_timer(1.0, self._tick, callback_group=self.cbg)
@@ -265,17 +248,7 @@ class AutoDock(Node):
         self.get_logger().info('Nav2 %s %s' % (label, '완료' if ok else '실패'))
         return ok
 
-    def _wait_costmap(self, timeout):
-        """Nav2 가 정말 목표를 받을 수 있는 상태인지 확인한다.
-
-        "액션 서버가 살아 있다"는 준비 완료가 아닙니다 — planner_server 가
-        아직 초기화 중이면 모든 목표가 즉시 ABORT 됩니다. 전역 코스트맵이
-        새로 발행됐다는 것이 직접 증거입니다.
-
-        QoS 를 기본(VOLATILE)으로 두는 것이 중요합니다. TRANSIENT_LOCAL 로
-        받으면 **절전 직전에 발행된 옛 코스트맵**이 즉시 들어와 준비된
-        것처럼 보입니다.
-        """
+        """Nav2 전역 코스트맵의 신규 발행 여부를 확인합니다."""
         self.costmap_seen = False
         sub = self.create_subscription(
             OccupancyGrid, self.costmap_topic,
@@ -299,13 +272,7 @@ class AutoDock(Node):
         self._manage_nav2(ManageLifecycleNodes.Request.PAUSE, 'PAUSE')
         self.saving = True
 
-    def _exit_power_save(self):
-        """절전 해제. **순서가 중요합니다.**
-
-        SLAM 을 먼저 살리고, Nav2 를 살린 뒤, 전역 코스트맵이 실제로
-        나오는 것까지 확인한 다음에야 로봇을 움직여야 합니다. 거꾸로 하면
-        복귀 직후 첫 목표가 즉시 ABORT 됩니다.
-        """
+        """절전 모드를 해제하고 SLAM, Nav2 및 코스트맵 복구를 순차적으로 진행합니다."""
         if not self.power_save or not self.saving:
             return True
         self.get_logger().info('절전 해제 — 인지/항법을 되살립니다')
@@ -414,15 +381,7 @@ class AutoDock(Node):
 def main():
     rclpy.init()
     n = AutoDock()
-    # 절전 진입/해제가 서비스 호출을 기다리며 블록하므로 멀티스레드
-    # 실행기가 필요합니다. 단일 스레드에서는 그 사이 응답 콜백이 돌지
-    # 못해 영원히 기다립니다.
-    # **스레드 수를 반드시 지정해야 합니다.** 인자 없이 만들면 rclpy 가
-    # CPU 코어 수만큼(이 PC 는 28개) 스레드를 만들고, 그 스레드들이
-    # 대기셋을 두고 경합하며 놀고 있어도 CPU 를 태웁니다.
-    # 실측: 지정 없이 두었을 때 idle 상태에서 86 %p.
-    # 여기서 동시에 필요한 것은 (상태 기계 + 액션/서비스 응답) 둘뿐입니다.
-    ex = MultiThreadedExecutor(num_threads=2)
+    # 절전 진입/해제 서비스 호출 대기를 위해 MultiThreadedExecutor 사용 (스레드 2개 지정)
     ex.add_node(n)
     try:
         ex.spin()

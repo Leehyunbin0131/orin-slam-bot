@@ -1,14 +1,6 @@
-"""주행 중 SLAM 자세가 실제와 얼마나 벌어지는지 연속 측정.
+"""주행 중 SLAM 추정 자세와 Gazebo 참값 간 오차 연속 측정 스크립트.
 
-지도에서 벽이 여러 겹으로 쌓이는 것은 "같은 벽을 서로 다른 위치에 기록"
-하기 때문입니다. 그 원인이 되는 자세 오차를 주행 내내 추적합니다.
-
-  python3 map_quality.py <라벨>
-
-로봇을 통로 왕복시키면서 0.5초마다
-  - SLAM 자세(map->base_footprint) vs Gazebo 실제 자세
-  - map->odom 보정량 변화 (SLAM 이 뒤늦게 고치는 양 = 지도가 흔들리는 양)
-을 기록합니다.
+    python3 map_quality.py <라벨>
 """
 import math
 import subprocess

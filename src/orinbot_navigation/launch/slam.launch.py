@@ -25,17 +25,7 @@ from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 from launch_ros.substitutions import FindPackageShare
 
-# ---------------------------------------------------------------------------
-# 센서 토픽 (실제 realsense2_camera 와 동일한 이름)
-#
-# VSLAM 은 컬러가 아니라 infra1(좌측 적외선)을 씁니다.
-#   - 실기에서 IR 센서는 글로벌 셔터라, 롤링 셔터인 컬러와 달리
-#     주행 중 회전에서 영상이 기울지 않습니다.
-#   - depth 가 infra1 광학축 기준으로 나오므로 align_depth 없이 정합됩니다.
-#   - IR 프로젝터 패턴 덕분에 무늬 없는 벽에서도 특징점이 나옵니다.
-#     (다만 프로젝터 패턴은 카메라에 고정되어 있어 "안 움직이는 특징점"으로
-#      보이므로, 실기에서는 depth_module.emitter_enabled 를 상황에 맞게
-#      조정하며 검증해야 합니다.)
+# 센서 토픽 설정 (realsense2_camera 규격)
 GRAY_TOPIC = '/camera/color/image_raw'
 INFO_TOPIC = '/camera/color/camera_info'
 DEPTH_TOPIC = '/camera/aligned_depth_to_color/image_raw'

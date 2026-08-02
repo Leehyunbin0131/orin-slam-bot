@@ -1,27 +1,8 @@
-"""충전 도킹 일체 (마커 검출 + docking_server + 배터리 + 자동 복귀).
+"""충전 도킹 통합 런치 파일 (마커 검출 + docking_server + 배터리 시뮬레이션 + 오토 도킹).
 
     ros2 launch orinbot_navigation docking.launch.py
 
-Nav2 와 따로 떼어 둔 이유: 도킹을 안 쓰는 구성에서 통째로 빼기 위해서이고
-(실기는 6코어라 안 쓰는 노드를 띄울 여유가 없습니다), 도킹만 다시 올릴 때
-Nav2 전체를 내렸다 올리는 45초를 아끼기 위해서입니다.
-
-구성
-----
-    /camera/color/image_raw --> dock_marker_board --> /detected_dock_pose
-                                                            |
-    /battery_state <-- battery_sim.py                       v
-            |                                        docking_server
-            v                                         /dock_robot
-        auto_dock.py  --(DockRobot)--------------------->  |
-                                                           v
-                                              /cmd_vel_dock --> twist_mux
-
-토픽 이름에 대하여
-------------------
-docking_server 의 속도 출력은 `cmd_vel` 이라 그대로 두면 twist_mux 의
-출력과 이름이 겹칩니다. `cmd_vel_dock` 으로 돌려 twist_mux 입력으로
-넣습니다 (config/twist_mux.yaml 에 우선순위 50 으로 등록되어 있습니다).
+속도 출력 토픽 `/cmd_vel_dock`은 `twist_mux`의 중재 입력(우선순위 50)으로 연결됩니다.
 """
 
 from launch import LaunchDescription

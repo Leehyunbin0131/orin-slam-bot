@@ -1,21 +1,8 @@
 #!/usr/bin/env python3
-"""시각 오도메트리 보정 TF(vodom -> odom)를 일정한 주기·최신 시각으로 재발행.
+"""Visual Odometry 보정 변환(vodom -> odom)을 일정한 주기 및 최신 타임스탬프 기반으로 재발행하는 노드.
 
-왜 필요한가
------------
-`rgbd_odometry` 가 직접 내보내는 TF 는 영상 촬영 시각으로 찍히고 프레임
-속도(10~15 Hz)로만 나옵니다 — 실측 평균 0.2초, 최악 0.85초 지연. Nav2 는
-"지금" 시각으로 map->odom 을 조회하므로 "Lookup would require extrapolation
-into the future" 가 나고 목표가 취소됩니다.
-RTAB-Map SLAM 노드는 `tf_tolerance` 로 이걸 해결하는데(현재보다 조금 앞선
-시각으로 발행) `rtabmap_odom` 에는 그 옵션이 없어 이 노드가 대신합니다.
-
-vodom -> odom 은 누적 드리프트 보정이라 천천히 변합니다. 조금 오래된 값을
-재사용해도 실질적 영향이 없고, 빠르게 변하는 성분(odom -> base_footprint)은
-휠 오도메트리가 50 Hz 로 계속 갱신합니다.
-
-    T(vodom->odom) = T(vodom->base) * T(odom->base)^-1
-    앞 항은 /vodom 메시지에서, 뒤 항은 diff_drive_controller 의 TF 에서.
+Visual Odometry 연산 지연 및 타임스탬프 비동기화로 인한 Nav2 TF 조회 실패를 방지하기 위해
+T(vodom->odom) = T(vodom->base) * T(odom->base)^-1 관계식을 연산하여 주기적으로 재발행합니다.
 """
 
 import numpy as np
@@ -60,8 +47,7 @@ class VodomTfRelay(Node):
         self.declare_parameter('wheel_odom_frame', 'odom')
         self.declare_parameter('base_frame', 'base_footprint')
         self.declare_parameter('publish_rate', 50.0)
-        # 현재보다 이만큼 앞선 시각으로 스탬프를 찍습니다.
-        # Nav2 가 "지금"으로 조회해도 외삽이 필요 없게 만드는 값입니다.
+        # 타임스탬프 예측 오프셋 [초] (TF 조회 시 미래 외삽 오류 방지)
         self.declare_parameter('tf_tolerance', 0.2)
 
         self.visual_frame = self.get_parameter('visual_odom_frame').value
@@ -74,8 +60,7 @@ class VodomTfRelay(Node):
         self.listener = TransformListener(self.buffer, self)
         self.broadcaster = TransformBroadcaster(self)
 
-        # 아직 시각 오도메트리를 못 받았어도 TF 체인이 끊기지 않도록
-        # 항등변환으로 시작합니다.
+        # 초기 항등 변환 (TF 체인 유지)
         self.correction_t = np.zeros(3)
         self.correction_q = np.array([0.0, 0.0, 0.0, 1.0])
         self.have_correction = False

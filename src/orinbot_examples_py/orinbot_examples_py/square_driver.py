@@ -1,18 +1,7 @@
 #!/usr/bin/env python3
-"""odom 피드백으로 정사각형 경로를 도는 예제 노드 (rclpy).
+"""오도메트리 피드백 기반 정사각형 경로 주행 예제 노드 (rclpy).
 
-퍼블리시: /cmd_vel  (geometry_msgs/TwistStamped)
-서브스크라이브: /odom (nav_msgs/Odometry)
-
-실행:
     ros2 run orinbot_examples_py square_driver --ros-args -p use_sim_time:=true
-
-파라미터:
-    side_length   정사각형 한 변 길이 [m]        (기본 1.5)
-    linear_speed  직진 속도 [m/s]                (기본 0.3)
-    angular_speed 회전 속도 [rad/s]              (기본 0.6)
-    position_tol  직진 종료 판정 오차 [m]        (기본 0.03)
-    yaw_tol       회전 종료 판정 오차 [rad]      (기본 0.02)
 """
 
 import math

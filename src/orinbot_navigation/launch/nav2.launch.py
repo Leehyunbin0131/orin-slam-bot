@@ -1,29 +1,6 @@
-"""Nav2 자율주행 스택.
+"""Nav2 자율주행 스택 런치 파일.
 
     ros2 launch orinbot_navigation nav2.launch.py
-
-    # 서버 6개를 한 프로세스에 모아 실행 (Orin 대비)
-    ros2 launch orinbot_navigation nav2.launch.py use_composition:=true
-
-nav2_bringup 의 navigation_launch.py 를 쓰지 않고 필요한 서버만 직접 띄웁니다.
-기본 런치는 route_server / docking_server / collision_monitor 까지 올리는데,
-이 로봇에는 쓰지 않는 것들이라 lifecycle 관리만 복잡해집니다.
-
-지도(/map)와 map->odom 변환은 RTAB-Map 이 제공하므로 AMCL 과 map_server 는
-띄우지 않습니다. slam.launch.py 를 먼저(또는 함께) 실행해야 합니다.
-
-컴포지션 — 현재 동작하지 않습니다 (use_composition:=true 는 실험용)
--------------------------------------------------------------------
-**코스트맵이 우리 설정을 못 받습니다.** launch_ros 는 YAML 을 "이름=값"으로
-풀어 LoadNode 에 넘기는데, 이 값은 지정한 노드 하나에만 붙습니다. 그런데
-controller_server / planner_server 는 자기 안에서 local_costmap /
-global_costmap 이라는 별도 노드를 또 만들고, 컨테이너 안에는 그 노드들이
-물려받을 --params-file 이 없습니다.
-실측: local_costmap 이 우리 플러그인 대신 static_layer 를 로드했고 이어서
-컨테이너가 SIGSEGV 로 죽었습니다. Nav2 공식 런치도 같은 한계입니다.
-고치려면 Nav2 쪽 수정이 필요하므로 그 전까지 false 로 두세요.
-
-`twist_mux` 는 컴포넌트가 없어 어느 쪽이든 늘 별도 프로세스입니다.
 """
 
 from launch import LaunchDescription

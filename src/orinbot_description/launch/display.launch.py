@@ -1,9 +1,6 @@
-"""URDF 확인용 런치: Gazebo 없이 robot_state_publisher + RViz 만 띄웁니다.
+"""URDF 모델 검증 및 시각화 전용 런치 파일 (robot_state_publisher + RViz2).
 
     ros2 launch orinbot_description display.launch.py
-
-joint_state_publisher_gui 슬라이더로 바퀴를 돌려보며 링크/조인트가
-의도대로 붙었는지 확인하는 용도입니다.
 """
 
 from launch import LaunchDescription

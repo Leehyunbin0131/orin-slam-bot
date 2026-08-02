@@ -1,4 +1,4 @@
-"""수정한 프론티어 검출을 현재 /map 에 적용해 통로가 살아나는지 확인한다."""
+"""/map 기반 프론티어 검출 알고리즘 동작 검증 스크립트."""
 import time
 import numpy as np, rclpy
 from nav_msgs.msg import OccupancyGrid

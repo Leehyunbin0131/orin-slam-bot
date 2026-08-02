@@ -1,10 +1,6 @@
-"""SLAM 자세 정확도를 Gazebo 실제 자세와 비교.
+"""SLAM 자세 정확도 및 복귀 오차 검증 스크립트.
 
-  1) 제자리 360도 회전 후 각도/위치 오차
-  2) 왕복 주행 후 원점 복귀 오차
-
-시각 오도메트리를 끄면(use_vslam:=false) 여기가 나빠지는지 보는 것이 목적.
-기준(시각 오도메트리 사용 시): 360도 회전 오차 3mm / 0.03도.
+    python3 slam_accuracy.py
 """
 import math
 import subprocess

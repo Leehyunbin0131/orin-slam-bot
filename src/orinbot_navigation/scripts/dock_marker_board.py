@@ -1,27 +1,10 @@
 #!/usr/bin/env python3
-"""도크의 ArUco 마커 3장을 **하나의 보드로 묶어** 자세를 추정한다.
+"""ArUco 마커 보드 기반 도크 자세 추정 노드.
 
     /camera/color/image_raw + camera_info  -->  /detected_dock_pose
 
-`image_proc/track_marker_node` 를 쓰지 않는 이유
-------------------------------------------------
-그 노드는 마커 **한 장**만 추적합니다. 정면에 가까운 평면 마커 하나는 자세
-모호성 때문에 각도가 크게 튑니다(실측 1.3 m 에서 4.77도). **이 스테이션에는
-가이드 벽이 없어 최종 각도를 전적으로 인식이 결정하므로** 그대로는 못 씁니다.
-마커 3장을 **좌우로 벌려** 코너 12개를 함께 풀면(estimatePoseBoard) yaw 가
-강하게 구속됩니다. 세로로 쌓으면 개선 효과가 거의 없습니다.
-
-자세 확정 후 직진
------------------
-가까이 갈수록 마커는 커지지만 바깥 두 장이 화각을 벗어나기 시작해 **마지막
-몇 프레임이 가장 부정확합니다.** 그런데 docking_server 는 마지막 검출값을
-목표로 얼려서 들어가므로 가장 나쁜 관측으로 마무리하게 됩니다(세로 오차
--25 ~ +46 mm). 그래서 `lock_distance`(0.45 m — 카메라 기준입니다. 로봇 중심
-으로는 0.65 m) 안으로 들어오면 그 시점 자세를 고정하고 시각만 갱신합니다.
-
-  주의: 고정할 때 **반드시 odom 프레임으로 변환**해야 합니다. 카메라 광학
-  프레임 값을 그대로 얼려 재발행하면 목표가 로봇을 따라 움직여 영원히
-  도달하지 못합니다.
+복수의 ArUco 마커(3장) 코너 정보를 보드 단위(estimatePoseBoard)로 정합하여 자세 추정 정확도를 향상시킵니다.
+근접 거리(lock_distance 이내) 진입 시 고정 프레임(fixed_frame) 상의 자세를 확정하고 시각만 갱신하여 근거리 검출 오차를 방지합니다.
 """
 
 import math
@@ -66,26 +49,22 @@ class DockMarkerBoard(Node):
         super().__init__('dock_marker_board')
         p = self.declare_parameter
 
-        # generate_textures.py 의 ARUCO_DICT 와 같아야 합니다 (0 = DICT_4X4_50)
+        # ArUco 딕셔너리 설정 (0 = DICT_4X4_50)
         p('dictionary', 0)
-        # generate_room.py 의 DOCK_MARKER_IDS / DOCK_MARKER_DX 와 짝입니다.
-        # ids[i] 마커가 도크 중심에서 월드 x 로 dx[i] 만큼 떨어져 있습니다.
+        # 마커 ID 및 도크 중심 기준 X축 offset 배치 [m]
         p('marker_ids', [1, 0, 2])
         p('marker_dx', [-0.16, 0.0, 0.16])
-        # 검은 사각형 한 변 [m] (흰 여백 제외)
+        # 마커 단일 변 크기 [m]
         p('marker_size', 0.10)
-        # 최소 이만큼 검출돼야 자세를 냅니다. 1장만 보고 내면 각도가
-        # 튀므로 2장 이상을 요구합니다.
+        # 최소 검출 마커 수
         p('min_markers', 2)
 
-        # 카메라-마커 전방 거리가 이 값보다 가까워지면 자세를 고정합니다.
-        # 로봇 중심 기준 0.6 m 는 카메라 기준 0.4 m 입니다
-        # (카메라가 로봇 중심에서 0.20 m 앞).
+        # 근거리 자세 확정 거리 [m] (카메라 기준)
         p('lock_distance', 0.40)
-        # 로봇이 물러나 이 거리 밖에서 다시 보이면 고정을 풉니다.
+        # 자세 확정 해제 거리 [m]
         p('unlock_distance', 0.60)
         p('fixed_frame', 'odom')
-        # 고정 상태에서 내보내는 주기 [Hz]
+        # 자세 확정 후 재발행 주기 [Hz]
         p('lock_publish_rate', 15.0)
 
         g = lambda n: self.get_parameter(n).value  # noqa: E731
@@ -99,8 +78,7 @@ class DockMarkerBoard(Node):
 
         self.dict = cv2.aruco.Dictionary_get(int(g('dictionary')))
         self.params = cv2.aruco.DetectorParameters_create()
-        # 코너를 부화소까지 다듬습니다. 424x240 에서 마커가 수십 픽셀뿐이라
-        # 이 한 단계가 각도 정확도에 크게 기여합니다.
+        # 서브픽셀 코너 정밀화 설정
         self.params.cornerRefinementMethod = cv2.aruco.CORNER_REFINE_SUBPIX
 
         self.board = self._make_board(ids, dxs)
@@ -109,9 +87,7 @@ class DockMarkerBoard(Node):
         self.D = None
         self.locked = None            # 고정된 PoseStamped (fixed_frame)
 
-        # 충전 중 절전용. 도크에 붙어 있으면 마커가 안 보이는데도 매
-        # 프레임 detectMarkers 를 돌려 CPU 40%p 를 씁니다(실측).
-        # auto_dock 이 extra_pause_services 로 불러 재웁니다.
+        # 충전 중 절전용 서비스 핸들러
         self.paused = False
         self.create_service(Empty, '~/pause', self._srv_pause)
         self.create_service(Empty, '~/resume', self._srv_resume)

@@ -1,34 +1,8 @@
 #!/usr/bin/env python3
-"""Nav2 가 활성화에 실패하면 다시 시도시키고, 되면 스스로 끝난다.
+"""Nav2 라이프사이클 기동 모니터링 및 자동 재시도 워치독 노드.
 
-왜 필요한가
------------
-`lifecycle_manager` 의 `change_state` 응답이 유실되면 기동이 이렇게 끝납니다.
-
-    [controller_server.rclcpp] failed to send response to
-        /controller_server/change_state (timeout)
-    [lifecycle_manager_navigation] Failed to bring up all requested nodes.
-
-노드는 살아 있는데 전부 `inactive` 라 액션 서버는 보이면서 모든 목표를 즉시
-ABORT 합니다. 겉으로는 "Nav2 는 떠 있는데 로봇이 안 움직인다"로만 보입니다.
-이 개발 PC 는 NIC 가 3개라 FastDDS 서비스 매칭이 늦어 자주 납니다
-(`ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST` 로도 완전히 없어지지 않습니다).
-실기에서 더 잦은지는 아직 확인하지 못했습니다 — 2026-08-02 실행에서는
-재현되지 않았습니다.
-
-무엇을 하는가
--------------
-`is_active` 를 물어보다가 `startup_timeout` 안에 활성이 안 되면 `manage_nodes`
-로 **RESET 후 STARTUP** 을 다시 겁니다. RESET 이 먼저인 이유는 일부 노드가
-이미 활성이면 STARTUP 만으로는 "already active" 로 실패하기 때문입니다.
-활성이 확인되면 이 노드는 종료합니다.
-
-구현 주의
----------
-- **타이머 콜백 안에서 `spin_until_future_complete` 를 부르면 안 됩니다**
-  (`Executor is already spinning` 으로 죽습니다). main 에서 순차 루프로 돕니다.
-- **시계는 벽시계입니다.** `use_sim_time` 에 묶으면 시뮬레이터가 `/clock` 을
-  내보내기 전까지 시간이 흐르지 않아 영원히 대기합니다.
+Nav2 노드 활성화(Bringup) 실패 감지 시 lifecycle_manager의 manage_nodes 서비스를 호출하여 RESET 후 STARTUP을 재요청합니다.
+모든 대상 노드의 활성화가 확인되면 모니터링을 종료하고 정상 퇴장합니다.
 """
 
 import sys

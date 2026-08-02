@@ -1,17 +1,8 @@
 #!/usr/bin/env python3
-"""시각 오도메트리용 텍스처 생성.
-
-단색 벽에서는 ORB/GFTT 같은 특징점 검출기가 코너를 거의 못 찾아
-visual odometry 가 즉시 실패합니다. 여기서 만드는 텍스처는
-"고주파 + 비반복" 패턴이라 특징점이 고르게 분포하고, 패턴이 반복되지
-않으므로 서로 다른 위치를 같은 곳으로 오인하는 문제도 없습니다.
+"""Visual Odometry 및 ArUco 도크 표적용 텍스처 패치 생성 스크립트.
 
     python3 generate_textures.py
-
-materials/textures/ 아래에 PNG 를 씁니다. 시드를 고정해 두어 실행할
-때마다 같은 결과가 나옵니다.
 """
-
 import math
 import sys
 import os

@@ -1,16 +1,6 @@
-"""orinbot 시뮬레이션 전체 구동.
+"""Gazebo 시뮬레이터 및 로봇 브리지/컨트롤러 통합 런치 파일.
 
     ros2 launch orinbot_bringup sim.launch.py
-
-띄우는 것:
-  1. Gazebo Harmonic (worlds/room.sdf)
-  2. robot_state_publisher  (URDF -> /robot_description, TF)
-  3. Gazebo 에 로봇 스폰
-  4. ros_gz_bridge  (카메라/IMU/clock)
-  5. ros2_control 컨트롤러 (joint_state_broadcaster, diff_drive_controller)
-  6. RViz2 (옵션)
-
-컨트롤러 스포너는 로봇 스폰이 끝난 뒤에 순차 실행되도록 이벤트로 묶여 있습니다.
 """
 
 from launch import LaunchDescription

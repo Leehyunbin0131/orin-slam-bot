@@ -1,4 +1,4 @@
-"""/map 을 PNG 로 저장하고 프론티어를 표시한다."""
+"""/map 점유 격자 데이터를 이미지(PNG)로 저장하고 프론티어를 시각화하는 스크립트."""
 import numpy as np, rclpy, time
 from nav_msgs.msg import OccupancyGrid
 from rclpy.node import Node

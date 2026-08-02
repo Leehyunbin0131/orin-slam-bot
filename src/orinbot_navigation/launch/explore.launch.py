@@ -1,14 +1,6 @@
-"""프론티어 탐사 노드만 띄웁니다.
-
-이미 시뮬 + SLAM + Nav2 가 돌고 있을 때:
+"""프론티어 자동 탐사 노드 단독 런치 파일.
 
     ros2 launch orinbot_navigation explore.launch.py
-
-노드가 /map 과 navigate_to_pose 액션 서버를 스스로 기다리므로 순서는
-상관없습니다. 언제 띄워도 준비되면 알아서 시작합니다.
-
-탐사를 멈추려면 이 런치만 Ctrl-C 하면 됩니다. 진행 중이던 목표는 Nav2 가
-그대로 수행하니, 즉시 세우려면 RViz 의 Cancel 을 함께 누르세요.
 """
 
 from launch import LaunchDescription

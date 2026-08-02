@@ -1,35 +1,20 @@
-"""시뮬레이션 + VSLAM + Nav2 를 한 번에.
+"""시뮬레이션, VSLAM, Nav2 통합 자율주행 런치 파일.
 
+주요 실행 예시:
+    # 전체 스택 실행
     ros2 launch orinbot_navigation navigation.launch.py
 
-    # 이미 만들어 둔 지도로 자율주행만
-    ros2 launch orinbot_navigation navigation.launch.py localization:=true
-
-    # 시뮬레이터를 따로 띄워 놓고 SLAM+Nav2 만
-    ros2 launch orinbot_navigation navigation.launch.py use_sim:=false
-
-    # 지도 없이 시작해 스스로 미탐색 구역을 돌며 지도를 만듦
+    # 자동 탐사 모드 실행
     ros2 launch orinbot_navigation navigation.launch.py explore:=true
 
-    # 도킹 없이 (실기에서 도크를 안 쓸 때 / 자원을 아낄 때)
-    ros2 launch orinbot_navigation navigation.launch.py dock:=false
+    # 지도 기반 위치 추정 전용 모드
+    ros2 launch orinbot_navigation navigation.launch.py localization:=true
 
-    # 충전 복귀 시나리오를 몇 분 안에 보기 (배터리 60배속, 30% 에서 시작)
-    ros2 launch orinbot_navigation navigation.launch.py \
-        battery_speedup:=60 initial_soc:=0.3
+    # 외부 시뮬레이터 연결 (SLAM + Nav2만 기동)
+    ros2 launch orinbot_navigation navigation.launch.py use_sim:=false
 
-RViz 에서 "2D Goal Pose" 로 목표를 찍으면 주행합니다.
-지도가 아직 비어 있으면 경로계획이 실패하니, explore:=true 로 자동 탐사를
-시키거나 텔레오퍼레이션으로 한 바퀴 돌아 지도를 만든 뒤 목표를 주세요.
-
-기동 순서에 대해
------------------
-세 스택을 동시에 띄우면 CPU 경합으로 Nav2 의 lifecycle 전이가 자주
-실패합니다 (planner_server 가 코스트맵을 만드는 동안 change_state 응답이
-유실됨). 그래서 고정 시간 지연 대신, 선행 조건 토픽이 실제로 나올 때까지
-기다렸다가 다음 단계를 띄웁니다.
-
-    시뮬 --(/odom 대기)--> VSLAM --(/map 대기)--> Nav2
+노드 기동 순서:
+    시뮬레이터 (/odom 대기) --> VSLAM (/map 대기) --> Nav2
 """
 
 from launch import LaunchDescription
