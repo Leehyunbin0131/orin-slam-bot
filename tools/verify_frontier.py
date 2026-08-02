@@ -1,6 +1,5 @@
 """수정한 프론티어 검출을 현재 /map 에 적용해 통로가 살아나는지 확인한다."""
-import sys, time
-sys.path.insert(0, '/home/hyunlee/ros2_ws/src/mybot_navigation/scripts')
+import time
 import numpy as np, rclpy
 from nav_msgs.msg import OccupancyGrid
 from rclpy.node import Node
