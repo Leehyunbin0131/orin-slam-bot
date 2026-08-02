@@ -5,10 +5,9 @@ Panels:
     Property Tree Widget:
       Expanded:
         - /Global Options1
-        - /Map3D1
         - /StvlVoxels1
       Splitter Ratio: 0.5
-    Tree Height: 411
+    Tree Height: 481
   - Class: rviz_common/Views
     Expanded:
       - /Current View1
@@ -310,6 +309,94 @@ Visualization Manager:
         Value: /local_plan
       Value: true
     - Alpha: 1
+      Axes Length: 0.20000000298023224
+      Axes Radius: 0.019999999552965164
+      Class: rviz_default_plugins/Pose
+      Color: 0; 255; 255
+      Enabled: true
+      Head Length: 0.07000000029802322
+      Head Radius: 0.03999999910593033
+      Name: DetectedMarker
+      Shaft Length: 0.15000000596046448
+      Shaft Radius: 0.014999999664723873
+      Shape: Arrow
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /detected_dock_pose
+      Value: true
+    - Alpha: 1
+      Axes Length: 0.30000001192092896
+      Axes Radius: 0.029999999329447746
+      Class: rviz_default_plugins/Pose
+      Color: 255; 0; 255
+      Enabled: true
+      Head Length: 0.10000000149011612
+      Head Radius: 0.05000000074505806
+      Name: DockTarget
+      Shaft Length: 0.20000000298023224
+      Shaft Radius: 0.019999999552965164
+      Shape: Arrow
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /dock_pose
+      Value: true
+    - Alpha: 1
+      Axes Length: 0.30000001192092896
+      Axes Radius: 0.029999999329447746
+      Class: rviz_default_plugins/Pose
+      Color: 255; 255; 0
+      Enabled: true
+      Head Length: 0.10000000149011612
+      Head Radius: 0.05000000074505806
+      Name: StagingPose
+      Shaft Length: 0.20000000298023224
+      Shaft Radius: 0.019999999552965164
+      Shape: Arrow
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /staging_pose
+      Value: true
+    - Alpha: 1
+      Buffer Length: 1
+      Class: rviz_default_plugins/Path
+      Color: 0; 255; 255
+      Enabled: true
+      Head Diameter: 0.10000000149011612
+      Head Length: 0.05000000074505806
+      Length: 0.30000001192092896
+      Line Style: Lines
+      Line Width: 0.019999999552965164
+      Name: DockingTrajectory
+      Offset:
+        X: 0
+        Y: 0
+        Z: 0
+      Pose Color: 255; 85; 255
+      Pose Style: None
+      Radius: 0.029999999329447746
+      Shaft Diameter: 0.05000000074505806
+      Shaft Length: 0.05000000074505806
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /docking_trajectory
+      Value: true
+    - Alpha: 1
       Autocompute Intensity Bounds: true
       Autocompute Value Bounds:
         Max Value: 10
@@ -346,8 +433,8 @@ Visualization Manager:
     - Alpha: 1
       Autocompute Intensity Bounds: true
       Autocompute Value Bounds:
-        Max Value: 10
-        Min Value: -10
+        Max Value: 0.824999988079071
+        Min Value: 0.02500000037252903
         Value: true
       Axis: Z
       Channel Name: intensity
@@ -365,8 +452,8 @@ Visualization Manager:
       Position Transformer: XYZ
       Selectable: true
       Size (Pixels): 2
-      Size (m): 0.05
-      Style: Boxes
+      Size (m): 0.05000000074505806
+      Style: Points
       Topic:
         Depth: 5
         Durability Policy: Volatile
@@ -495,32 +582,32 @@ Visualization Manager:
         Swap Stereo Eyes: false
         Value: false
       Focal Point:
-        X: -0.6700133681297302
-        Y: 1.4226948022842407
-        Z: 1.5988316535949707
+        X: 2.0146501064300537
+        Y: 1.2548836469650269
+        Z: 1.5525660514831543
       Focal Shape Fixed Size: true
       Focal Shape Size: 0.05000000074505806
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Pitch: 0.5147973895072937
+      Pitch: 0.8697970509529114
       Target Frame: <Fixed Frame>
       Value: Orbit (rviz_default_plugins)
-      Yaw: 2.008072853088379
+      Yaw: 2.168076515197754
     Saved: ~
 Window Geometry:
+  ColorImage:
+    collapsed: false
   Displays:
     collapsed: false
   Height: 1012
   Hide Left Dock: false
   Hide Right Dock: false
-  ColorImage:
-    collapsed: false
   Navigation 2:
     collapsed: false
-  QMainWindow State: 000000ff00000000fd00000001000000000000029500000396fc0200000004fb000000160049006e00660072006100310049006d006100670065010000003f0000016f0000001700fffffffb000000100044006900730070006c00610079007301000001b400000221000000cc00fffffffb0000000a00560069006500770073000000025200000183000000a900fffffffb00000018004e0061007600690067006100740069006f006e0020003200000001dd000001f8000001f800ffffff000003a50000039600000004000000040000000800000008fc0000000100000002000000010000000a0054006f006f006c00730100000000ffffffff0000000000000000
+  QMainWindow State: 000000ff00000000fd00000001000000000000029500000396fc0200000005fb000000160049006e00660072006100310049006d006100670065010000003f0000016f0000000000000000fb000000100044006900730070006c006100790073010000003f00000267000000cc00fffffffb0000000a00560069006500770073000000025200000183000000a900fffffffb00000018004e0061007600690067006100740069006f006e0020003200000001dd000001f8000001f800fffffffb000000140043006f006c006f00720049006d00610067006501000002ac000001290000001700ffffff000003a50000039600000004000000040000000800000008fc0000000100000002000000010000000a0054006f006f006c00730100000000ffffffff0000000000000000
   Views:
     collapsed: false
   Width: 1600
-  X: 23
-  Y: 50
+  X: 201
+  Y: 131

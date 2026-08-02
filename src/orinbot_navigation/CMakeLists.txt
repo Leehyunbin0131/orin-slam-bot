@@ -13,6 +13,9 @@ install(
     scripts/vodom_tf_relay.py
     scripts/frontier_explorer.py
     scripts/nav2_startup_watchdog.py
+    scripts/auto_dock.py
+    scripts/dock_marker_board.py
+    scripts/staged_dock.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

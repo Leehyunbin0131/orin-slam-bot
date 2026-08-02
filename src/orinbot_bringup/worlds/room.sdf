@@ -1943,5 +1943,104 @@
         </visual>
       </link>
     </model>
+    <model name="dock_station">
+      <static>true</static>
+      <link name="link">
+      <visual name="dock_panel">
+        <pose>1.0 -3.9250000000000003 0.225 0 0 0</pose>
+        <geometry><box><size>0.52 0.05 0.45</size></box></geometry>
+        <material>
+          <ambient>1 1 1 1</ambient>
+          <diffuse>1 1 1 1</diffuse>
+          <specular>0.05 0.05 0.05 1</specular>
+          <pbr>
+            <metal>
+              <albedo_map>model://room_materials/materials/textures/dock_body.png</albedo_map>
+              <metalness>0.0</metalness>
+              <roughness>0.9</roughness>
+            </metal>
+          </pbr>
+        </material>
+      </visual>
+      <collision name="dock_panel_c">
+        <pose>1.0 -3.9250000000000003 0.225 0 0 0</pose>
+        <geometry><box><size>0.52 0.05 0.45</size></box></geometry>
+      </collision>
+      <visual name="dock_marker_1">
+        <pose>0.84 -3.898 0.31 0 0 0</pose>
+        <geometry><box><size>0.14 0.008 0.14</size></box></geometry>
+        <material>
+          <ambient>1 1 1 1</ambient>
+          <diffuse>1 1 1 1</diffuse>
+          <specular>0.05 0.05 0.05 1</specular>
+          <pbr>
+            <metal>
+              <albedo_map>model://room_materials/materials/textures/dock_marker_1.png</albedo_map>
+              <metalness>0.0</metalness>
+              <roughness>0.9</roughness>
+            </metal>
+          </pbr>
+        </material>
+      </visual>
+      <visual name="dock_marker_0">
+        <pose>1.0 -3.898 0.31 0 0 0</pose>
+        <geometry><box><size>0.14 0.008 0.14</size></box></geometry>
+        <material>
+          <ambient>1 1 1 1</ambient>
+          <diffuse>1 1 1 1</diffuse>
+          <specular>0.05 0.05 0.05 1</specular>
+          <pbr>
+            <metal>
+              <albedo_map>model://room_materials/materials/textures/dock_marker_0.png</albedo_map>
+              <metalness>0.0</metalness>
+              <roughness>0.9</roughness>
+            </metal>
+          </pbr>
+        </material>
+      </visual>
+      <visual name="dock_marker_2">
+        <pose>1.16 -3.898 0.31 0 0 0</pose>
+        <geometry><box><size>0.14 0.008 0.14</size></box></geometry>
+        <material>
+          <ambient>1 1 1 1</ambient>
+          <diffuse>1 1 1 1</diffuse>
+          <specular>0.05 0.05 0.05 1</specular>
+          <pbr>
+            <metal>
+              <albedo_map>model://room_materials/materials/textures/dock_marker_2.png</albedo_map>
+              <metalness>0.0</metalness>
+              <roughness>0.9</roughness>
+            </metal>
+          </pbr>
+        </material>
+      </visual>
+      <visual name="dock_plate_0">
+        <pose>0.945 -3.5 0.02 0 0 0</pose>
+        <geometry><box><size>0.075 0.1 0.04</size></box></geometry>
+        <material>
+          <ambient>0.72 0.45 0.2 1</ambient>
+          <diffuse>0.72 0.45 0.2 1</diffuse>
+          <specular>0.3 0.3 0.3 1</specular>
+        </material>
+      </visual>
+      <collision name="dock_plate_0_c">
+        <pose>0.945 -3.5 0.02 0 0 0</pose>
+        <geometry><box><size>0.075 0.1 0.04</size></box></geometry>
+      </collision>
+      <visual name="dock_plate_1">
+        <pose>1.055 -3.5 0.02 0 0 0</pose>
+        <geometry><box><size>0.075 0.1 0.04</size></box></geometry>
+        <material>
+          <ambient>0.72 0.45 0.2 1</ambient>
+          <diffuse>0.72 0.45 0.2 1</diffuse>
+          <specular>0.3 0.3 0.3 1</specular>
+        </material>
+      </visual>
+      <collision name="dock_plate_1_c">
+        <pose>1.055 -3.5 0.02 0 0 0</pose>
+        <geometry><box><size>0.075 0.1 0.04</size></box></geometry>
+      </collision>
+      </link>
+    </model>
   </world>
 </sdf>

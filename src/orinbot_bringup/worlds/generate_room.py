@@ -13,6 +13,7 @@
 없습니다.
 """
 
+import math
 import sys
 
 TEX = 'model://room_materials/materials/textures'
@@ -447,6 +448,187 @@ for i, (x, y, r, h, c) in enumerate(PILLARS):
         </visual>
       </link>
     </model>""")
+
+# ---------------- 충전 도킹 스테이션 ----------------
+# 남쪽 벽에 붙입니다. 반경 1.5 m 안에 아무것도 없어 진입로가 넓고,
+# 좁은 통로 뱅크(x=3.2)를 거치지 않고 갈 수 있는 자리입니다.
+#
+# 높이를 정한 근거 (카메라가 마커를 놓치는 거리를 최소화):
+#   카메라는 지면 0.36 m 에서 15도 아래를 봅니다. 컬러 화각은
+#   69.4 x 42.8 도이므로 시야는 수평 기준 +6.4도 ~ -36.4도 입니다.
+#   마커(한 변 s=0.12) 중심을 높이 h 에 두면 마커가 화면 안에 완전히
+#   들어오는 최소 거리는
+#       위쪽 잘림: (h + s/2 - 0.36) / tan(6.4도)
+#       아래쪽 잘림: (0.36 - h + s/2) / tan(36.4도)
+#   둘 중 큰 값입니다. 두 식이 같아지는 h = 0.316 에서 최소가 되어
+#   0.14 m 까지 보입니다. h 를 0.20 으로 낮추면 0.30 m 에서 이미
+#   화면 아래로 잘려 나가므로, "낮은 도크가 자연스럽다"는 직관대로
+#   두면 안 됩니다.
+# 마커를 놓치는 마지막 구간은 docking_server 가 직전 검출값으로
+# 밀고 들어갑니다 (docking.yaml 의 external_detection_timeout).
+DOCK_X = 1.0
+DOCK_WALL_Y = -ROOM_Y + WALL_T / 2.0    # 벽 안쪽면 = -3.95
+DOCK_PANEL_T = 0.05                     # 백패널 두께
+DOCK_PANEL_W = 0.52
+DOCK_PANEL_H = 0.45
+DOCK_PLATE = 0.14                       # 마커판 한 변 (텍스처 전체)
+DOCK_MARKER = 0.10                      # 검은 사각형 한 변
+DOCK_MARKER_Z = 0.31                    # 마커 중심 높이 (위 계산)
+# 마커 3장의 좌우 배치 (도크 중심 기준, 월드 x). 왼쪽/가운데/오른쪽에
+# 각각 id 1 / 0 / 2 를 붙입니다. 검출기(dock_marker_board.py)가 이 배치를
+# 그대로 알고 있어야 하나의 보드로 풀 수 있습니다.
+DOCK_MARKER_DX = (-0.16, 0.0, 0.16)
+DOCK_MARKER_IDS = (1, 0, 2)
+
+# --- 충전 접점 (바닥 동판 2장) ---
+# 실물 구조: 스테이션 바닥에 +/- 동판 두 장, 로봇 배면(하부)에 6핀
+# 포고핀 블록 두 개(좌우). 로봇이 그 위를 타고 들어가면 포고핀이
+# 눌리며 접촉합니다.
+#
+# **동판을 바닥에 평평하게 깔 수 없습니다.** 로봇 접지고는 60 mm 인데
+# (섀시 바닥 0.06 m), 코스트맵의 min_obstacle_height 가 0.03 이라 로봇은
+# 30 mm 미만 물체를 장애물로 보지 않고 그냥 밟고 지나갑니다. 배면 브래킷을
+# 30 mm 아래로 내리면 월드의 3 cm 문턱 같은 것에 그대로 부딪힙니다.
+# 그래서 브래킷은 30~60 mm 사이(여기서는 45 mm)에 두고, 동판을 40 mm
+# 높이로 올려 그 5 mm 를 포고핀 스트로크로 메웁니다.
+#
+# 좌우 위치: 구동륜이 ±0.17, 캐스터가 ±0.14 에 있으므로 바퀴가 지나가지
+# 않는 띠는 |y| < 0.11 입니다. 동판은 그 안에 들어가야 합니다.
+# 바퀴가 동판 위로 올라가면 로봇 전체가 같이 들려서 브래킷과의 간격이
+# 그대로 유지되어 버립니다.
+#
+# 동판 규격 75 x 100 mm 는 **실물 부품 치수**입니다 (좌우 75, 앞뒤 100).
+#
+# 접촉 허용치는 동판에서 **브래킷이 아니라 핀 배열**을 뺀 값입니다.
+# 실물 커넥터는 6핀 2x3 배열 / 피치 2.54 mm / male DIP 이므로,
+# 전기적으로 닿아야 하는 면적은 브래킷(30 mm 각)이 아니라
+#     가로 (3-1)*2.54 + 핀지름 = 6.1 mm
+#     세로 (2-1)*2.54 + 핀지름 = 3.5 mm
+# 뿐입니다. 브래킷은 이 커넥터를 붙드는 구조물일 뿐이라 동판 밖으로
+# 걸쳐 있어도 무방합니다 (동판 상면 40 mm, 브래킷 하단 45 mm 로
+# 애초에 닿지 않습니다).
+# 따라서 (동판 - 핀배열)/2 로
+#     세로 ±48 mm, 가로 ±34 mm.
+#
+# 30 mm 브래킷을 접촉면으로 잡았을 때(±35 / ±22.5 mm)보다 오히려
+# 넓습니다. 접촉 판정을 브래킷 기준으로 두면 실제로는 닿아 있는데
+# "충전 안 됨"이 되어, 있지도 않은 정렬 정확도를 요구하게 됩니다.
+#
+# 단락 걱정은 없습니다: 커넥터가 반대편 동판(안쪽 가장자리 17.5 mm)에
+# 닿으려면 72.5 mm 를 밀려야 하는데 그 전에 자기 동판을 벗어납니다.
+#
+# 좌우 배치 확인: 중심 오프셋 ±0.055 에 반폭 0.0375 이므로 동판은
+# |y| = 0.0175 ~ 0.0925 를 차지합니다. 바퀴가 지나가지 않는 띠
+# |y| < 0.11 안입니다.
+DOCK_PLATE_LAT = 0.055                  # 동판 중심의 좌우 오프셋
+DOCK_PLATE_W = 0.075                    # 좌우 폭 (실물 규격)
+DOCK_PLATE_L = 0.10                     # 앞뒤 길이 (실물 규격)
+# 포고핀 커넥터 (6핀 2x3, 피치 2.54 mm, male DIP). 3핀 방향을 로봇
+# 좌우로 놓습니다. 접촉 허용치는 여기서 유도됩니다.
+DOCK_PIN_PITCH = 0.00254
+DOCK_PIN_DIA = 0.001                    # 플런저 지름 (2.54 피치 표준)
+DOCK_PIN_W = 2 * DOCK_PIN_PITCH + DOCK_PIN_DIA   # 좌우 (3핀)
+DOCK_PIN_L = 1 * DOCK_PIN_PITCH + DOCK_PIN_DIA   # 앞뒤 (2핀)
+DOCK_PLATE_Z = 0.04                     # 동판 윗면 높이
+DOCK_PLATE_BACK = 0.10                  # 로봇 중심에서 뒤로 (= 브래킷 위치)
+DOCK_BRACKET_Z = 0.045                  # 로봇 배면 브래킷 하단 (urdf 와 맞출 것)
+DOCK_COPPER = (0.72, 0.45, 0.20)
+
+# --- 가이드 벽은 두지 않습니다 ---
+# 실물 스테이션에 가이드 벽이 없습니다. 그래서 각도를 잡아 줄 물리적
+# 수단이 없고, 최종 자세는 전적으로 마커 인식 정확도가 결정합니다.
+# 마커를 한 장이 아니라 세 장(보드)으로 둔 이유가 이것입니다.
+#
+# 부수 효과로 코스트맵 문제도 사라집니다. 폭 0.44 m 짜리 가이드 벽이
+# 있던 구성에서는 벽에서 0.20 m(로봇 내접 반경) 이내가 전부
+# INSCRIBED_INFLATED_OBSTACLE 로 칠해져 깔때기 안쪽 전체가 "충돌"로
+# 읽혔고, docking_server 의 충돌 검사를 꺼야만 했습니다.
+
+_panel_front = DOCK_WALL_Y + DOCK_PANEL_T               # -3.90
+
+# 도킹 완료 시 로봇 중심 (docking.yaml 의 home_dock.pose).
+# 앞면 접점이 없으므로 깊이를 정하는 것은 **카메라입니다.** D435i 하우징이
+# 로봇 중심에서 0.2125 m 앞까지 나와 있어, 더 깊이 넣으면 마커판을
+# 들이받습니다. 아래에서 남는 여유를 계산해 찍어 줍니다.
+# 실측 세로 오차가 -19 ~ +41 mm 로 흩어집니다(10회). 마커가 화각을
+# 벗어나기 직전 프레임의 값이 그대로 목표로 얼어붙는데, 그 마지막
+# 프레임이 가장 부정확하기 때문입니다. 최악(+41 mm)에서도 카메라 앞에
+# 40 mm 는 남도록 도킹 자세를 -3.63 에서 30 mm 물렸습니다.
+# (물려도 동판은 이 값에서 유도되므로 접점 여유는 그대로입니다)
+DOCK_ROBOT_Y = -3.60
+DOCK_CAM_REACH = 0.2125                 # orinbot.urdf.xacro: base_length/2 + 0.0125
+# 마커판은 패널 앞면보다 2 mm 파묻습니다. 면을 정확히 맞추면 두 면이
+# 같은 평면에 놓여 z-파이팅으로 카메라 영상에서 깜빡이고, 그 상태로는
+# 마커 검출이 프레임마다 들쭉날쭉해집니다 (바닥 타일과 같은 이유).
+_plate_t = 0.008
+_plate_cy = _panel_front - 0.002 + _plate_t / 2.0
+
+w(f"""    <model name="dock_station">
+      <static>true</static>
+      <link name="link">""")
+# 백패널
+box_visual('dock_panel',
+           f'{DOCK_X} {DOCK_WALL_Y + DOCK_PANEL_T/2.0} {DOCK_PANEL_H/2.0} 0 0 0',
+           f'{DOCK_PANEL_W} {DOCK_PANEL_T} {DOCK_PANEL_H}', 'dock_body.png')
+box_collision('dock_panel_c',
+              f'{DOCK_X} {DOCK_WALL_Y + DOCK_PANEL_T/2.0} {DOCK_PANEL_H/2.0} 0 0 0',
+              f'{DOCK_PANEL_W} {DOCK_PANEL_T} {DOCK_PANEL_H}')
+# 마커판 (충돌 없음 — 패널 안에 파묻혀 있어 의미가 없습니다)
+for _dx, _mid in zip(DOCK_MARKER_DX, DOCK_MARKER_IDS):
+    box_visual(f'dock_marker_{_mid}',
+               f'{DOCK_X + _dx} {_plate_cy} {DOCK_MARKER_Z} 0 0 0',
+               f'{DOCK_PLATE} {_plate_t} {DOCK_PLATE}',
+               f'dock_marker_{_mid}.png')
+
+
+
+def colored_box(name, pose, size, rgb, collision=True):
+    w(f"""      <visual name="{name}">
+        <pose>{pose}</pose>
+        <geometry><box><size>{size}</size></box></geometry>
+        <material>
+          <ambient>{rgb[0]} {rgb[1]} {rgb[2]} 1</ambient>
+          <diffuse>{rgb[0]} {rgb[1]} {rgb[2]} 1</diffuse>
+          <specular>0.3 0.3 0.3 1</specular>
+        </material>
+      </visual>""")
+    if collision:
+        box_collision(f'{name}_c', pose, size)
+
+
+# 충전 동판 2장 (바닥). 로봇 배면 브래킷이 이 위에 얹힙니다.
+# 전기적 접촉은 흉내내지 않습니다 — battery_sim.py 가 기하로 판단합니다.
+# 로봇이 도크를 마주 보므로 로봇 앞뒤축 = 월드 y, 로봇 좌우축 = 월드 x 입니다.
+_plate_y = DOCK_ROBOT_Y + DOCK_PLATE_BACK
+for _k, _s in enumerate((-1, 1)):
+    colored_box(
+        f'dock_plate_{_k}',
+        f'{DOCK_X + _s * DOCK_PLATE_LAT} {_plate_y} {DOCK_PLATE_Z/2.0} 0 0 0',
+        f'{DOCK_PLATE_W} {DOCK_PLATE_L} {DOCK_PLATE_Z}',
+        DOCK_COPPER)
+
+w('      </link>')
+w('    </model>')
+
+# 손으로 옮겨 적어야 하는 값과 그 여유를 찍어 줍니다.
+_marker_front = _plate_cy + _plate_t / 2.0
+_cam_front = DOCK_ROBOT_Y - DOCK_CAM_REACH
+sys.stderr.write(
+    'docking.yaml home_dock.pose: [%.3f, %.3f, -1.5708]\n'
+    '  카메라 최전단 y=%.4f, 마커판까지 여유 %+.1f mm\n'
+    '  동판 상면 %.0f mm / 브래킷 하단 %.0f mm -> 포고 필요 스트로크 %.0f mm\n'
+    '  핀 배열 %.1f x %.1f mm -> 접촉 허용치 세로 ±%.1f mm, 가로 ±%.1f mm\n'
+    % (DOCK_X, DOCK_ROBOT_Y, _cam_front, (_cam_front - _marker_front) * 1000,
+       DOCK_PLATE_Z * 1000, DOCK_BRACKET_Z * 1000,
+       (DOCK_BRACKET_Z - DOCK_PLATE_Z) * 1000,
+       DOCK_PIN_W * 1000, DOCK_PIN_L * 1000,
+       (DOCK_PLATE_L - DOCK_PIN_L) / 2.0 * 1000,
+       (DOCK_PLATE_W - DOCK_PIN_W) / 2.0 * 1000))
+
+# 도크 자체는 라이다 스캔 평면(0.4908 m)보다 낮아 2D 라이다에 잡히지
+# 않습니다. 하지만 벽면에서 0.115 m 밖에 안 나오는데 벽은 1.2 m 라
+# 라이다에 잡히고 팽창 반경이 0.40 m 이므로, 경로가 도크를 뚫고 지나갈
+# 일은 없습니다. 도크 형상 자체는 카메라(STVL / RTAB-Map 격자)가 봅니다.
 
 w('  </world>')
 w('</sdf>')

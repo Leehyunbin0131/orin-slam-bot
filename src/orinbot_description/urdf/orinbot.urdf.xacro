@@ -47,6 +47,7 @@
   <material name="chassis_grey"><color rgba="0.35 0.38 0.42 1.0"/></material>
   <material name="wheel_black"><color rgba="0.1 0.1 0.1 1.0"/></material>
   <material name="caster_silver"><color rgba="0.7 0.7 0.7 1.0"/></material>
+  <material name="pogo_gold"><color rgba="0.85 0.7 0.25 1.0"/></material>
 
   <!-- ======================= 본체 ======================= -->
 
@@ -72,6 +73,62 @@
     <xacro:inertial_box mass="${base_mass}" x="${base_length}" y="${base_width}" z="${base_height}">
       <origin xyz="0 0 0" rpy="0 0 0"/>
     </xacro:inertial_box>
+
+    <!-- 충전 포고핀 브래킷 (배면 좌우 2개, 각 6핀)
+      도크 바닥의 동판 위에 얹혀 접촉합니다.
+
+      높이가 이 로봇에서 가장 빡빡한 치수입니다.
+        섀시 바닥      0.060 m  (= 접지고. 캐스터 지름)
+        브래킷 하단    0.045 m  <- 여기
+        동판 상면      0.040 m  (generate_room.py 의 DOCK_PLATE_Z)
+                       =====
+        포고 스트로크  0.005 m
+
+      **0.030 m 아래로 내리면 안 됩니다.** 코스트맵의
+      min_obstacle_height 가 0.03 이라 로봇은 30 mm 미만 물체를 장애물로
+      보지 않고 그냥 밟고 지나갑니다 (월드의 3 cm 문턱이 그 경계 시험용).
+      브래킷이 그보다 낮으면 코스트맵이 무시한 물체에 그대로 걸립니다.
+      반대로 0.060 m 위로 올리면 섀시 안에 들어가 동판에 닿지 않습니다.
+
+      좌우 위치도 자유롭지 않습니다. 구동륜이 ±0.17, 캐스터가 ±0.14 에
+      있어 바퀴가 지나가지 않는 띠는 |y| < 0.11 뿐입니다. 동판이 바퀴
+      경로에 걸리면 로봇이 동판 위로 올라타 버려 브래킷과의 간격이
+      그대로 유지됩니다.
+    -->
+    <!--
+      실물 커넥터: 6핀 2x3 배열 / 피치 2.54 mm / male / DIP(관통홀) 2개.
+      아래 30 mm 각 상자는 그 커넥터와 기판을 붙드는 **브래킷**이지
+      접촉면이 아닙니다. 전기적으로 닿아야 하는 면적은 핀 배열
+      6.1 x 3.5 mm 뿐이고, 접촉 허용치는 거기서 나옵니다
+      (generate_room.py 가 계산해 찍어 줍니다: 세로 ±48, 가로 ±34 mm).
+      브래킷이 동판 밖으로 걸쳐 있어도 무방합니다.
+
+      실기 확인 필요: 동판 상면 40 mm, 브래킷 하단 45 mm 이므로 핀이
+      브래킷 아래로 5 mm 이상 나와 있어야 합니다. 2.54 mm 피치 포고핀의
+      스트로크는 보통 1.5~2.5 mm 라 **자유 길이로 5 mm 를 메우고 남는
+      만큼만 압축 여유**가 됩니다. 그 여유가 곧 바닥 높이 편차(램프
+      기울기, 동판 두께 공차) 허용치이므로 부품 데이터시트로 확인하세요.
+    -->
+    <xacro:property name="pogo_x" value="-0.10"/>      <!-- 배면 쪽 -->
+    <xacro:property name="pogo_y" value="0.055"/>
+    <xacro:property name="pogo_bottom" value="0.045"/>  <!-- 지면 기준 -->
+    <xacro:property name="pogo_size" value="0.03"/>     <!-- 브래킷, 접촉면 아님 -->
+    <xacro:property name="pogo_h" value="0.015"/>
+    <xacro:macro name="pogo_block" params="reflect">
+      <visual>
+        <origin xyz="${pogo_x} ${reflect * pogo_y}
+                     ${pogo_bottom + pogo_h/2.0 - base_z}" rpy="0 0 0"/>
+        <geometry><box size="${pogo_size} ${pogo_size} ${pogo_h}"/></geometry>
+        <material name="pogo_gold"/>
+      </visual>
+      <collision>
+        <origin xyz="${pogo_x} ${reflect * pogo_y}
+                     ${pogo_bottom + pogo_h/2.0 - base_z}" rpy="0 0 0"/>
+        <geometry><box size="${pogo_size} ${pogo_size} ${pogo_h}"/></geometry>
+      </collision>
+    </xacro:macro>
+    <xacro:pogo_block reflect="1"/>
+    <xacro:pogo_block reflect="-1"/>
   </link>
 
   <!-- ======================= 구동륜 ======================= -->
@@ -220,6 +277,35 @@
   <gazebo reference="base_link">
     <material>Gazebo/Grey</material>
   </gazebo>
+
+  <!-- ======================= 지상 진실 자세 (시뮬 전용) ======================= -->
+  <!--
+    Gazebo 가 아는 로봇의 "진짜" 자세를 내보냅니다. 실기에는 없는 것이므로
+    자율주행 스택은 절대 구독하면 안 됩니다. 쓰는 곳은 두 군데뿐입니다.
+      - battery_sim.py : 충전 접점이 실제로 맞닿았는지 판정
+      - tools/*.py     : SLAM 오차 측정의 기준값
+
+    왜 /world/room/dynamic_pose/info 를 브리지하지 않는가:
+    그 메시지에는 프레임 이름을 담는 header.data 가 없어서
+    ros_gz_bridge 의 Pose_V -> TFMessage 변환이 frame_id 를 전부 빈
+    문자열로 채웁니다. 그러면 어느 것이 로봇인지 구분할 수 없습니다
+    (실측 확인). OdometryPublisher 는 nav_msgs/Odometry 로 바로 나옵니다.
+
+    TF 는 내보내지 않습니다 — EKF 가 이미 odom->base_footprint 를
+    발행하고 있어 중복 발행이 되면 좌표계가 꼬입니다.
+  -->
+  <xacro:if value="$(arg sim_mode)">
+    <gazebo>
+      <plugin filename="gz-sim-odometry-publisher-system"
+              name="gz::sim::systems::OdometryPublisher">
+        <odom_frame>world</odom_frame>
+        <robot_base_frame>base_footprint</robot_base_frame>
+        <odom_topic>ground_truth/odom</odom_topic>
+        <odom_publish_frequency>20</odom_publish_frequency>
+        <dimensions>2</dimensions>
+      </plugin>
+    </gazebo>
+  </xacro:if>
 
   <!-- ======================= ros2_control ======================= -->
   <xacro:orinbot_ros2_control

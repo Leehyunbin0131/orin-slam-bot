@@ -11,6 +11,13 @@
     # 지도 없이 시작해 스스로 미탐색 구역을 돌며 지도를 만듦
     ros2 launch orinbot_navigation navigation.launch.py explore:=true
 
+    # 도킹 없이 (실기에서 도크를 안 쓸 때 / 자원을 아낄 때)
+    ros2 launch orinbot_navigation navigation.launch.py dock:=false
+
+    # 충전 복귀 시나리오를 몇 분 안에 보기 (배터리 60배속, 30% 에서 시작)
+    ros2 launch orinbot_navigation navigation.launch.py \
+        battery_speedup:=60 initial_soc:=0.3
+
 RViz 에서 "2D Goal Pose" 로 목표를 찍으면 주행합니다.
 지도가 아직 비어 있으면 경로계획이 실패하니, explore:=true 로 자동 탐사를
 시키거나 텔레오퍼레이션으로 한 바퀴 돌아 지도를 만든 뒤 목표를 주세요.
@@ -99,6 +106,20 @@ def generate_launch_description():
             'explore', default_value='false',
             description='지도 없이 시작해 스스로 미탐색 구역을 탐사. '
                         'localization:=true 와 함께 쓰면 의미가 없습니다'),
+        DeclareLaunchArgument(
+            'dock', default_value='true',
+            description='충전 도킹 (마커 검출 + docking_server + 배터리)'),
+        DeclareLaunchArgument(
+            'auto_dock', default_value='true',
+            description='잔량이 떨어지면 스스로 도크로 복귀. false 로 두면 '
+                        '도킹 기능은 살아 있고 사람이 /dock_robot 을 직접 겁니다'),
+        DeclareLaunchArgument(
+            'battery_speedup', default_value='1.0',
+            description='배터리 방전/충전 시간 배속. 도킹 시나리오를 몇 분 '
+                        '안에 보려면 60 정도로 올리세요'),
+        DeclareLaunchArgument(
+            'initial_soc', default_value='0.85',
+            description='시작 잔량 (0~1)'),
     ]
 
     # GroupAction 으로 감싸는 이유
@@ -148,6 +169,19 @@ def generate_launch_description():
             PathJoinSubstitution([nav_share, 'launch', 'explore.launch.py'])]),
     )], condition=IfCondition(LaunchConfiguration('explore')))
 
+    # 도킹은 Nav2 뒤에 띄웁니다. docking_server 의 충돌 검사기가
+    # /local_costmap/costmap_raw 를 구독하고, staging pose 이동은
+    # navigate_to_pose 를 씁니다. 둘 다 Nav2 가 올라와야 생깁니다.
+    dock = GroupAction([IncludeLaunchDescription(
+        PythonLaunchDescriptionSource([
+            PathJoinSubstitution([nav_share, 'launch', 'docking.launch.py'])]),
+        launch_arguments={
+            'auto_dock': LaunchConfiguration('auto_dock'),
+            'battery_speedup': LaunchConfiguration('battery_speedup'),
+            'initial_soc': LaunchConfiguration('initial_soc'),
+        }.items(),
+    )], condition=IfCondition(LaunchConfiguration('dock')))
+
     rviz = Node(
         package='rviz2',
         executable='rviz2',
@@ -173,7 +207,7 @@ def generate_launch_description():
     start_wait_map = RegisterEventHandler(
         OnProcessExit(target_action=wait_odom, on_exit=[wait_map]))
     start_nav2 = RegisterEventHandler(
-        OnProcessExit(target_action=wait_map, on_exit=[nav2]))
+        OnProcessExit(target_action=wait_map, on_exit=[nav2, dock]))
 
     return LaunchDescription(args + [
         sim,

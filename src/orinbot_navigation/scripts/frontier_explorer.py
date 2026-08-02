@@ -54,7 +54,7 @@ from rclpy.node import Node
 from rclpy.qos import QoSDurabilityPolicy, QoSProfile, QoSReliabilityPolicy
 from rclpy.time import Time
 from scipy import ndimage
-from std_msgs.msg import ColorRGBA
+from std_msgs.msg import Bool, ColorRGBA
 from tf2_ros import Buffer, TransformListener
 from visualization_msgs.msg import Marker, MarkerArray
 
@@ -210,6 +210,15 @@ class FrontierExplorer(Node):
         self.costmap_seen = None
         self.create_subscription(
             OccupancyGrid, 'global_costmap/costmap', self._on_costmap, latched)
+        # 외부에서 탐사를 잠시 멈추는 스위치 (auto_dock.py 가 씁니다).
+        # 충전 복귀는 DockRobot 이 내부적으로 NavigateToPose 를 거는데,
+        # 여기서 2초마다 새 목표를 계속 보내면 그 이동을 밀어내 버려
+        # 로봇이 도크로 가지 못합니다.
+        # 기본값은 활성입니다 — 이 토픽을 아무도 발행하지 않는 구성에서
+        # 탐사가 멈춰 있으면 안 되기 때문입니다.
+        self.paused = False
+        self.create_subscription(Bool, 'exploration_enabled', self._on_enable, 10)
+
         self.tf_buf = Buffer()
         self.tf_listener = TransformListener(self.tf_buf, self)
         self.ac = ActionClient(self, NavigateToPose, 'navigate_to_pose')
@@ -222,6 +231,19 @@ class FrontierExplorer(Node):
     # ------------------------------------------------------------------ 입력
     def _on_map(self, msg):
         self.map_msg = msg
+
+    def _on_enable(self, msg):
+        want_pause = not msg.data
+        if want_pause == self.paused:
+            return
+        self.paused = want_pause
+        if self.paused:
+            # 진행 중이던 목표를 반드시 취소합니다. 그냥 두면 Nav2 가
+            # 계속 그쪽으로 몰고 가면서 도킹용 이동과 싸웁니다.
+            self._cancel()
+            self.get_logger().info('탐사 일시 정지 (외부 요청)')
+        else:
+            self.get_logger().info('탐사 재개')
 
     def _on_costmap(self, msg):
         if self.costmap_seen is None:
@@ -405,7 +427,7 @@ class FrontierExplorer(Node):
 
     # ------------------------------------------------------------------ 본체
     def _tick(self):
-        if self.finished or self.map_msg is None:
+        if self.finished or self.paused or self.map_msg is None:
             return
         if not self.ac.server_is_ready() or self.costmap_seen is None:
             return          # Nav2 가 아직 목표를 처리할 수 없는 상태

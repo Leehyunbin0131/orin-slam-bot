@@ -33,6 +33,16 @@
   <!-- 자율주행 명령과 사람 명령의 중재. 없으면 수동 개입이 불가능합니다. -->
   <exec_depend>twist_mux</exec_depend>
 
+  <!-- 충전 도킹 (launch/docking.launch.py, config/docking.yaml)
+       opennav_docking : Nav2 공식 도킹 태스크 서버 (/dock_robot, /undock_robot)
+       cv_bridge + opencv : scripts/dock_marker_board.py 가 ArUco 마커
+                            3장을 하나의 보드로 풀어 도크 자세를 냅니다. -->
+  <exec_depend>opennav_docking</exec_depend>
+  <exec_depend>cv_bridge</exec_depend>
+  <exec_depend>python3-opencv</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+
   <!-- 프론티어 탐사 (scripts/frontier_explorer.py) -->
   <exec_depend>rclpy</exec_depend>
   <exec_depend>nav_msgs</exec_depend>

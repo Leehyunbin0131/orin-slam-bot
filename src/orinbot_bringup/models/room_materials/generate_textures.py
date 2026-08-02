@@ -23,6 +23,24 @@ OUT = os.path.join(HERE, 'materials', 'textures')
 
 rng = np.random.default_rng(20260801)
 
+# ---- 도킹 스테이션 표적 (ArUco) ----
+# 여기 두 값은 orinbot_navigation/config/docking.yaml 의
+# dock_marker_detector 파라미터(dictionary / marker_id)와 반드시 같아야
+# 합니다. 다르면 마커가 보여도 검출되지 않습니다.
+#
+# 사전을 4x4(=cv2.aruco.DICT_4X4_50, 0번)로 고른 이유:
+# 카메라가 424x240 이라 멀리서는 마커가 몇십 픽셀밖에 안 됩니다.
+# 4x4 는 테두리 포함 6칸이라 24 px 정도면 읽히지만, 기본값인
+# 6x6(10번)은 8칸이라 32 px 이상 필요해 검출 거리가 눈에 띄게 짧아집니다.
+# 방 하나에 도크 하나뿐이라 50개 사전으로 충분합니다.
+ARUCO_DICT = 0
+# 마커 3개를 하나의 보드로 씁니다. 한 장만 쓰면 정면에 가까운 평면
+# 마커의 자세 모호성 때문에 각도가 1.3 m 에서 4.77도까지 튑니다(실측).
+# 세 장의 코너 12개를 함께 풀면(estimatePoseBoard) 그 흔들림이 크게
+# 줄고, 특히 좌우로 벌려 놓은 배치가 yaw 를 강하게 구속합니다.
+# 순서는 도크 기준 왼쪽(-x) / 가운데 / 오른쪽(+x) 입니다.
+ARUCO_IDS = (1, 0, 2)
+
 
 def save(img, name):
     os.makedirs(OUT, exist_ok=True)
@@ -80,6 +98,33 @@ def tiles(size=512):
     for i in range(n + 1):
         d.line([(0, i * cell), (size, i * cell)], fill=(96, 96, 100), width=3)
         d.line([(i * cell, 0), (i * cell, size)], fill=(96, 96, 100), width=3)
+    return img
+
+
+def aruco_marker(marker_id=0, dictionary=ARUCO_DICT):
+    """도킹 스테이션 표적판.
+
+    cv2 로 직접 그립니다. 비트 패턴을 손으로 옮겨 적으면 사전(dictionary)
+    정의와 한 비트라도 어긋났을 때 "검출이 그냥 안 되는" 상태가 되는데,
+    원인을 찾기가 매우 어렵습니다. 검출기(image_proc/track_marker_node)와
+    같은 라이브러리로 생성해 두면 둘이 어긋날 수 없습니다.
+
+    치수 (도크 모델·검출기 파라미터와 함께 맞춰야 하는 값):
+        판 전체 0.14 m     <- generate_room.py 의 DOCK_PLATE
+        검은 사각형 0.10 m <- dock_marker_board.py 의 marker_size
+    504 px 판에서 마커가 360 px 이므로 사방 여백이 72 px(=0.02 m)입니다.
+    이 흰 여백(quiet zone)이 없으면 마커 경계가 배경에 묻혀 검출이
+    불안정해집니다.
+    """
+    import cv2  # 생성 시에만 필요합니다 (ROS 스택에 이미 들어 있음)
+
+    size, inner = 504, 360
+    d = cv2.aruco.Dictionary_get(dictionary)
+    bits = cv2.aruco.drawMarker(d, marker_id, inner)
+
+    img = Image.new('RGB', (size, size), (255, 255, 255))
+    pad = (size - inner) // 2
+    img.paste(Image.fromarray(bits).convert('RGB'), (pad, pad))
     return img
 
 
@@ -160,6 +205,11 @@ def main():
     for i in range(1, N_POSTERS + 1):
         save(poster(), 'poster%d.png' % i)
     save(speckle((120, 140, 170), blobs=1200), 'crate.png')
+    for _i in ARUCO_IDS:
+        save(aruco_marker(_i), 'dock_marker_%d.png' % _i)
+    # 도크 몸통. 방 안의 다른 무엇과도 안 닮은 색이라야 RTAB-Map 이
+    # 도크 앞을 다른 장소로 착각하지 않습니다.
+    save(speckle((60, 70, 90), blobs=800), 'dock_body.png')
 
 
 if __name__ == '__main__':

@@ -25,6 +25,12 @@
   <exec_depend>teleop_twist_keyboard</exec_depend>
   <!-- EKF (휠 엔코더 + D435i 자이로 융합). config/ekf.yaml 참고. -->
   <exec_depend>robot_localization</exec_depend>
+  <!-- scripts/battery_sim.py — 실기 BMS 드라이버 자리를 메우는 시뮬 노드 -->
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+  <exec_depend>nav_msgs</exec_depend>
+  <exec_depend>tf2_ros</exec_depend>
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
 
