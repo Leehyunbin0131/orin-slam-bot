@@ -1,4 +1,4 @@
-# mybot workspace — 작업 지침
+# orinbot workspace — 작업 지침
 
 ROS 2 **Jazzy** + **Gazebo Harmonic** (Ubuntu 24.04). 실제 로봇 없이 시뮬레이션으로 개발 중.
 
@@ -18,8 +18,8 @@ ROS 2 **Jazzy** + **Gazebo Harmonic** (Ubuntu 24.04). 실제 로봇 없이 시�
   D435i 는 `realsense2_camera` (`camera_name:=camera`, `camera_namespace:=""`)
   기준. 시뮬 전용 이름을 새로 만들지 말 것.
 - 속도 명령은 `geometry_msgs/TwistStamped` (Jazzy `diff_drive_controller` 기본).
-- 치수는 `mybot.urdf.xacro` 상단 파라미터 블록에만 둔다. 하드코딩 금지.
-  변경 시 `mybot_bringup/config/controllers.yaml` 의 `wheel_separation` /
+- 치수는 `orinbot.urdf.xacro` 상단 파라미터 블록에만 둔다. 하드코딩 금지.
+  변경 시 `orinbot_bringup/config/controllers.yaml` 의 `wheel_separation` /
   `wheel_radius` 도 반드시 같이 수정.
 
 ## 빌드 / 실행 / 측정
@@ -97,7 +97,7 @@ ROS 2 **Jazzy** + **Gazebo Harmonic** (Ubuntu 24.04). 실제 로봇 없이 시�
 ## 센서 담당 구역
 
 치수·주기·좌표 같은 사양은 여기 적지 않습니다. 바뀌면 이 복사본만 낡습니다
-(실제로 두 번 낡았습니다). 출처를 보세요 — `mybot.urdf.xacro` 상단 파라미터
+(실제로 두 번 낡았습니다). 출처를 보세요 — `orinbot.urdf.xacro` 상단 파라미터
 블록, `d435i.urdf.xacro`, `rplidar_a2m12.urdf.xacro`, `generate_room.py`.
 
 여기에는 코드에서 못 읽는 **왜**만 둡니다.
@@ -169,7 +169,7 @@ ROS 2 **Jazzy** + **Gazebo Harmonic** (Ubuntu 24.04). 실제 로봇 없이 시�
   처리량 문제일 뿐입니다. 해상도/주기를 낮추면 더 늘릴 수도 있습니다.
   단 대가는 있습니다: 실시간 배속(RTF)이 0.98 -> 0.84 로 떨어집니다.
   이건 시뮬만의 비용이고 실기 D435i 는 세 스트림을 하드웨어로 동시에 냅니다.
-  `mybot.urdf.xacro` 의 `camera_color_rate` 로 조절합니다.
+  `orinbot.urdf.xacro` 의 `camera_color_rate` 로 조절합니다.
 - **Gazebo 는 GPU 로 렌더링합니다.** `nvidia-smi` 에 gz sim 프로세스가
   GPU 메모리를 잡고 있고 `gz-rendering-ogre2` 가 로드됩니다.
   `libEGL warning: egl: failed to create dri2 screen` 은 헤드리스 EGL 경로
@@ -251,11 +251,11 @@ ROS 2 **Jazzy** + **Gazebo Harmonic** (Ubuntu 24.04). 실제 로봇 없이 시�
 지도 없이 시작해 스스로 미탐색 구역을 돌며 지도를 만듭니다.
 
 ```bash
-ros2 launch mybot_navigation navigation.launch.py explore:=true
-ros2 launch mybot_navigation explore.launch.py     # 이미 떠 있을 때 탐사만 추가
+ros2 launch orinbot_navigation navigation.launch.py explore:=true
+ros2 launch orinbot_navigation explore.launch.py     # 이미 떠 있을 때 탐사만 추가
 ```
 
-구현: `mybot_navigation/scripts/frontier_explorer.py`.
+구현: `orinbot_navigation/scripts/frontier_explorer.py`.
 `/map` 에서 "빈 곳인데 옆이 미탐색"인 셀(=프론티어)을 찾아 묶고,
 `거리 - gain*경계길이` 가 최소인 곳으로 `NavigateToPose` 를 보냅니다.
 실측: 10x8 m 방 전체를 약 3분에 매핑.
@@ -376,7 +376,7 @@ ros2 launch mybot_navigation explore.launch.py     # 이미 떠 있을 때 탐�
 
 ## EKF (휠 엔코더 + IMU) 함정
 
-- 구성: `mybot_bringup/config/ekf.yaml`. 엔코더의 `vx`/`vyaw` 와
+- 구성: `orinbot_bringup/config/ekf.yaml`. 엔코더의 `vx`/`vyaw` 와
   D435i 자이로의 `vyaw` 만 융합합니다. 엔코더 **위치**, IMU **자세**,
   IMU **가속도**는 일부러 쓰지 않습니다 (드리프트 누적 / 자력계 없음 /
   평면 주행에서 잡음 우세).
@@ -429,7 +429,7 @@ ros2 launch mybot_navigation explore.launch.py     # 이미 떠 있을 때 탐�
   (`gz sim` 서버가 남아 있으면 이전 모델이 재사용됨).
   `pkill -f` 는 자기 명령줄에도 걸려 스스로를 죽이므로 위의 `ps | awk` 방식을 쓸 것.
 - 파라미터만 바꿨을 때는 전체를 내리지 말 것. 시뮬과 SLAM 은 켜 둔 채
-  Nav2 노드만 죽였다 `ros2 launch mybot_navigation nav2.launch.py` 로 다시
+  Nav2 노드만 죽였다 `ros2 launch orinbot_navigation nav2.launch.py` 로 다시
   올리면 된다 (약 45초). 전체 재시작은 3분 이상 걸린다.
 - 컨트롤러가 안 올라오면 `ros2 control list_controllers` 로 상태부터 확인.
 - 카메라가 안 나오면 월드 SDF 에 `gz-sim-sensors-system` 플러그인이 있는지 확인.

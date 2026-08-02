@@ -12,7 +12,7 @@
 __pycache__/
 *.py[cod]
 
-# RTAB-Map 데이터베이스. 기본 경로는 ~/.ros/mybot_rtabmap.db 라 보통
+# RTAB-Map 데이터베이스. 기본 경로는 ~/.ros/orinbot_rtabmap.db 라 보통
 # 저장소 밖이지만, database_path 를 여기로 돌렸을 때를 대비해 막아 둡니다.
 # 매핑 한 번에 분당 약 37 MB 씩 자랍니다.
 *.db

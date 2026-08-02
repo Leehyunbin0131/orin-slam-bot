@@ -37,7 +37,7 @@ def gt():
     out = subprocess.run(
         ['gz', 'topic', '-e', '-t', '/world/room/dynamic_pose/info', '-n', '1'],
         capture_output=True, text=True, timeout=20).stdout
-    i = out.find('name: "mybot"')
+    i = out.find('name: "orinbot"')
     blk = out[i:i + 700]
 
     def num(f, a):

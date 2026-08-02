@@ -47,7 +47,7 @@ SPIN_T = 2 * math.pi / WZ * 1.35     # 360도 + 여유
 
 
 def set_pose(x, y, yaw):
-    req = ('name: "mybot", position: {z: 0.06}, '
+    req = ('name: "orinbot", position: {z: 0.06}, '
            'orientation: {x: 0, y: 0, z: %.6f, w: %.6f}' % (
                math.sin(yaw / 2), math.cos(yaw / 2)))
     req = req.replace('position: {z: 0.06}',
@@ -63,7 +63,7 @@ def ground_truth():
     out = subprocess.run(
         ['gz', 'topic', '-e', '-t', '/world/%s/dynamic_pose/info' % WORLD, '-n', '1'],
         capture_output=True, text=True, timeout=20).stdout
-    i = out.find('name: "mybot"')
+    i = out.find('name: "orinbot"')
     if i < 0:
         return None
     blk = out[i:i + 800]

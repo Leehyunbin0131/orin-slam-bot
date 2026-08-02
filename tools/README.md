@@ -9,7 +9,7 @@ export ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST
 python3 tools/<도구>.py
 ```
 
-대부분 스택이 떠 있어야 합니다 (`ros2 launch mybot_navigation navigation.launch.py`).
+대부분 스택이 떠 있어야 합니다 (`ros2 launch orinbot_navigation navigation.launch.py`).
 
 | 도구 | 재는 것 | 스택 필요 |
 |---|---|---|

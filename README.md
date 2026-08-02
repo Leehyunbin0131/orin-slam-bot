@@ -1,4 +1,4 @@
-# mybot — ROS 2 Jazzy + Gazebo Harmonic 시뮬레이션 워크스페이스
+# orinbot — ROS 2 Jazzy + Gazebo Harmonic 시뮬레이션 워크스페이스
 
 실제 로봇 없이 시뮬레이션에서 개발하기 위한 워크스페이스입니다.
 실기 이전을 염두에 두고, 시뮬과 실기가 **동일한 인터페이스**를 갖도록 구성했습니다.
@@ -11,19 +11,19 @@
 - Intel RealSense D435i (전면, 15도 하향) — 컬러 + 뎁스 + IMU
 - RPLIDAR A2M12 (상단) — 360도, 스캔 평면 지면 0.49 m
 
-기본 치수는 `mybot_description/urdf/mybot.urdf.xacro` 상단의 파라미터 블록에 모여 있습니다.
-실제 치수가 확정되면 그 블록과 `mybot_bringup/config/controllers.yaml` 의
+기본 치수는 `orinbot_description/urdf/orinbot.urdf.xacro` 상단의 파라미터 블록에 모여 있습니다.
+실제 치수가 확정되면 그 블록과 `orinbot_bringup/config/controllers.yaml` 의
 `wheel_separation` / `wheel_radius` 를 **같이** 고쳐야 합니다.
 
 ## 패키지 구성
 
 | 패키지 | 역할 |
 |---|---|
-| `mybot_description` | URDF/xacro, RViz 설정, URDF 확인용 런치 |
-| `mybot_bringup` | Gazebo 월드, 컨트롤러/브리지/EKF 설정, 시뮬 통합 런치 |
-| `mybot_examples_py` | rclpy 예제 (`square_driver`) |
-| `mybot_examples_cpp` | rclcpp 예제 (`depth_safety_filter`) |
-| `mybot_navigation` | RTAB-Map VSLAM + Nav2 자율주행 + 프론티어 자동 탐사 |
+| `orinbot_description` | URDF/xacro, RViz 설정, URDF 확인용 런치 |
+| `orinbot_bringup` | Gazebo 월드, 컨트롤러/브리지/EKF 설정, 시뮬 통합 런치 |
+| `orinbot_examples_py` | rclpy 예제 (`square_driver`) |
+| `orinbot_examples_cpp` | rclcpp 예제 (`depth_safety_filter`) |
+| `orinbot_navigation` | RTAB-Map VSLAM + Nav2 자율주행 + 프론티어 자동 탐사 |
 | `tools/` | 측정·회귀시험 스크립트 (패키지 아님 — `tools/README.md` 참고) |
 
 ## 최초 설치
@@ -86,14 +86,14 @@ source install/setup.bash
 ### 시뮬레이션 전체
 
 ```bash
-ros2 launch mybot_bringup sim.launch.py
+ros2 launch orinbot_bringup sim.launch.py
 ```
 
 주요 인자:
 
 | 인자 | 기본값 | 설명 |
 |---|---|---|
-| `world` | `room.sdf` | `mybot_bringup/worlds/` 아래 월드 파일 |
+| `world` | `room.sdf` | `orinbot_bringup/worlds/` 아래 월드 파일 |
 | `x` `y` `z` `yaw` | `0 0 0.15 0` | 스폰 위치 |
 | `use_rviz` | `true` | RViz2 동시 실행 |
 | `gui` | `true` | `false` 면 Gazebo headless |
@@ -102,7 +102,7 @@ ros2 launch mybot_bringup sim.launch.py
 ### URDF 만 확인 (Gazebo 없이)
 
 ```bash
-ros2 launch mybot_description display.launch.py
+ros2 launch orinbot_description display.launch.py
 ```
 
 ### 키보드 조종
@@ -116,10 +116,10 @@ ros2 run teleop_twist_keyboard teleop_twist_keyboard \
 
 ```bash
 # 정사각형 주행 (Python)
-ros2 run mybot_examples_py square_driver --ros-args -p use_sim_time:=true
+ros2 run orinbot_examples_py square_driver --ros-args -p use_sim_time:=true
 
 # 뎁스 기반 안전 필터 (C++): /cmd_vel_raw -> /cmd_vel
-ros2 run mybot_examples_cpp depth_safety_filter --ros-args -p use_sim_time:=true
+ros2 run orinbot_examples_cpp depth_safety_filter --ros-args -p use_sim_time:=true
 ```
 
 ## 인터페이스
@@ -158,7 +158,7 @@ map --(rtabmap)--> vodom --(rgbd_odometry)--> odom --(EKF)--> base_footprint
 
 ## 실제 로봇으로 옮길 때
 
-바꿔야 하는 것은 `mybot_description/urdf/mybot.ros2_control.xacro` 의
+바꿔야 하는 것은 `orinbot_description/urdf/orinbot.ros2_control.xacro` 의
 `<hardware>` 블록 하나입니다. 현재 `sim_mode:=false` 분기는
 `mock_components/GenericSystem` 으로 되어 있는데, 이를 직접 만든
 `hardware_interface` 플러그인으로 교체하면 `diff_drive_controller` 위쪽
@@ -175,7 +175,7 @@ cd ~/ros2_ws
 source /opt/ros/jazzy/setup.bash && source install/setup.bash
 export ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST      # 필수 (위 "환경변수" 절 참고)
 
-ros2 launch mybot_navigation navigation.launch.py
+ros2 launch orinbot_navigation navigation.launch.py
 ```
 
 RViz 의 **2D Goal Pose** 로 목표를 찍으면 주행합니다.
@@ -185,17 +185,17 @@ RViz 의 **2D Goal Pose** 로 목표를 찍으면 주행합니다.
 **지도 없이 시작해 스스로 지도 만들기 (프론티어 자동 탐사)**
 
 ```bash
-ros2 launch mybot_navigation navigation.launch.py explore:=true
+ros2 launch orinbot_navigation navigation.launch.py explore:=true
 ```
 
 빈 지도에서 시작해 "빈 곳인데 옆이 미탐색"인 경계를 찾아다니며 채웁니다.
 다 채우면 출발점으로 복귀하고 스스로 끝납니다 (10×8 m 방에서 약 3분).
-지도는 `~/.ros/mybot_rtabmap.db` 에 저장됩니다.
+지도는 `~/.ros/orinbot_rtabmap.db` 에 저장됩니다.
 
 **이미 만든 지도로 주행만 (운용 모드)**
 
 ```bash
-ros2 launch mybot_navigation navigation.launch.py localization:=true
+ros2 launch orinbot_navigation navigation.launch.py localization:=true
 ```
 
 지도를 갱신하지 않으므로 유령 장애물이 생겨도 사라지지 않습니다.
@@ -205,26 +205,26 @@ rtabmap 이 CPU 25.1 → 33.9 %p, 메모리 552 → 604 MB 로 늘어납니다.
 **측정·회귀시험 (창 없이 가볍게)**
 
 ```bash
-ros2 launch mybot_navigation navigation.launch.py gui:=false use_rviz:=false
+ros2 launch orinbot_navigation navigation.launch.py gui:=false use_rviz:=false
 ```
 
 **시뮬레이터를 따로 띄워 두고 SLAM+Nav2 만**
 
 ```bash
-ros2 launch mybot_navigation navigation.launch.py use_sim:=false
+ros2 launch orinbot_navigation navigation.launch.py use_sim:=false
 ```
 
 **이미 떠 있는 스택에 탐사만 추가**
 
 ```bash
-ros2 launch mybot_navigation explore.launch.py
+ros2 launch orinbot_navigation explore.launch.py
 ```
 
 **Nav2 파라미터만 고쳤을 때** — 전체 재시작(3분 이상) 대신 Nav2 만
 (약 45초). 시뮬과 SLAM 은 켜 둔 채 Nav2 프로세스만 죽이고 다시 띄웁니다.
 
 ```bash
-ros2 launch mybot_navigation nav2.launch.py
+ros2 launch orinbot_navigation nav2.launch.py
 ```
 
 ### 실기(Jetson Orin Nano) 자원 절감
@@ -233,10 +233,10 @@ ros2 launch mybot_navigation nav2.launch.py
 
 ```bash
 # rtabmap CPU -38%, 메모리 -106MB / 자세오차 21 -> 27 mm
-ros2 launch mybot_navigation navigation.launch.py detection_rate:=1.0
+ros2 launch orinbot_navigation navigation.launch.py detection_rate:=1.0
 
 # 시각 오도메트리를 끄고 EKF(휠+IMU)만. 절감이 가장 크지만 위치 정확도 손실도 큼
-ros2 launch mybot_navigation navigation.launch.py use_vslam:=false
+ros2 launch orinbot_navigation navigation.launch.py use_vslam:=false
 ```
 
 RViz 는 실기에서 띄우지 말고 개발 PC 에서 원격으로 보세요. 그때는 **양쪽 모두**
@@ -257,7 +257,7 @@ RViz 는 실기에서 띄우지 말고 개발 PC 에서 원격으로 보세요. 
 | `map_3d` | `false` | 3D 점유격자. `true` 면 메모리 2.7배 |
 | `reg_strategy` | `2` | 루프 클로저 검증. 0=영상만, 2=영상+ICP |
 
-전체 목록은 `ros2 launch mybot_navigation navigation.launch.py --show-args`.
+전체 목록은 `ros2 launch orinbot_navigation navigation.launch.py --show-args`.
 
 ### 띄운 직후 확인할 것
 

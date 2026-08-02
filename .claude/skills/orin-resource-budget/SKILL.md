@@ -1,6 +1,6 @@
 ---
 name: orin-resource-budget
-description: mybot 을 Jetson Orin Nano Super(6코어 A78AE, 8GB 통합메모리)에 올릴 때의 CPU/메모리 예산. 노드별 실측표, 측정 도구와 그 함정, 시도했다가 기각한 파라미터 변경 목록(controller_frequency, raytrace_max_range, Nav2 컴포지션)과 그 이유. 자원을 줄이려고 파라미터를 만지기 전에 읽을 것.
+description: orinbot 을 Jetson Orin Nano Super(6코어 A78AE, 8GB 통합메모리)에 올릴 때의 CPU/메모리 예산. 노드별 실측표, 측정 도구와 그 함정, 시도했다가 기각한 파라미터 변경 목록(controller_frequency, raytrace_max_range, Nav2 컴포지션)과 그 이유. 자원을 줄이려고 파라미터를 만지기 전에 읽을 것.
 ---
 
 # Orin Nano 자원 예산 (실측)
