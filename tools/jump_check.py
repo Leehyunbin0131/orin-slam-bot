@@ -1,6 +1,7 @@
-"""TF 중복 발행 여부 및 좌표계 점프(Jump) 감지 스크립트.
+#!/usr/bin/env python3
+"""TF duplicate publication and frame jump detection script.
 
-    python3 jump_check.py [측정초]
+    python3 tools/jump_check.py [duration_s]
 """
 import math
 import sys
@@ -21,7 +22,6 @@ class J(Node):
         self.set_parameters([rclpy.parameter.Parameter('use_sim_time', value=True)])
         self.buf = Buffer()
         self.tl = TransformListener(self.buf, self)
-        # 어떤 노드가 어떤 TF 를 발행하는지 센다
         self.pubs = {}
         self.create_subscription(TFMessage, '/tf', self.on_tf, 100)
 
@@ -43,11 +43,11 @@ t = time.time()
 while time.time() - t < 4:
     rclpy.spin_once(n, timeout_sec=0.1)
 
-print('=== /tf 에 실린 변환들 (4초간 메시지 수) ===')
+print('=== Transforms published on /tf (4s count) ===')
 for k, v in sorted(n.pubs.items(), key=lambda x: -x[1]):
-    print('   %-34s %5d 회  (%.0f Hz)' % (k, v, v / 4.0))
+    print('   %-34s %5d times  (%.0f Hz)' % (k, v, v / 4.0))
 
-print('\n=== %.0f 초간 점프 관측 ===' % DUR)
+print('\n=== Jump observations over %.0f seconds ===' % DUR)
 prev_mo = prev_ob = None
 jumps_mo, jumps_ob = [], []
 t0 = time.time()
@@ -64,17 +64,17 @@ while time.time() - t0 < DUR:
         if d > 0.02 or da > 0.02:
             jumps_mo.append((d, math.degrees(da)))
         d2 = math.hypot(ob[0] - prev_ob[0], ob[1] - prev_ob[1])
-        if d2 > 0.05:      # 정지 상태에서 5cm 이상 = 비정상
+        if d2 > 0.05:
             jumps_ob.append(d2)
     prev_mo, prev_ob = mo, ob
 
-print('map -> odom  (SLAM 보정): 점프 %d 회' % len(jumps_mo))
+print('map -> odom  (SLAM correction): jumps %d times' % len(jumps_mo))
 if jumps_mo:
-    print('   최대 %.3f m / %.2f 도,  합계 이동 %.3f m'
+    print('   max %.3f m / %.2f deg, total displacement %.3f m'
           % (max(j[0] for j in jumps_mo), max(j[1] for j in jumps_mo),
              sum(j[0] for j in jumps_mo)))
-print('odom -> base (오도메트리): 비정상 점프 %d 회%s'
+print('odom -> base (Odometry): abnormal jumps %d times%s'
       % (len(jumps_ob),
-         ('  최대 %.3f m' % max(jumps_ob)) if jumps_ob else '  (정상)'))
+         ('  max %.3f m' % max(jumps_ob)) if jumps_ob else '  (Normal)'))
 rclpy.shutdown()
 sys.exit(0)

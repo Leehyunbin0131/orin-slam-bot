@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""/map 점유 격자 지도 기반 프론티어 영역 추출 및 자율 탐사 노드.
+"""Frontier area extraction and autonomous exploration node based on /map occupancy grid.
 
-미탐색 경계 셀(프론티어)을 군집화하고 이동 거리 및 미탐색 영역 크기를 종합 평가하여
-Nav2 NavigateToPose 액션을 통해 효율적인 자동 지도를 생성합니다.
+Clusters unmapped boundary cells (frontiers) and evaluates distance and unexplored area gain
+to generate autonomous mapping goals via Nav2 NavigateToPose action.
 """
 
 import math
@@ -29,70 +29,59 @@ class FrontierExplorer(Node):
         super().__init__('frontier_explorer')
 
         p = self.declare_parameter
-        # 탐사 검토 주기 [초]
+        # Exploration evaluation period [s]
         p('period', 2.0)
-        # 최소 군집 프론티어 셀 수 (노이즈 군집 제거)
+        # Minimum frontier cluster size in cells
         p('min_frontier_cells', 8)
-        # 통과 및 회차 가능 최소 이격거리 [m] (0.33 m = 최소 통로 폭 0.70 m 안전 여유 반영)
+        # Minimum clearance distance [m] (0.33 m = 0.70 m corridor width safety margin)
         p('min_clearance', 0.33)
-        # 목표 셀 선호 이격거리 [m]
+        # Preferred cell clearance distance [m]
         p('clearance', 0.35)
-        # 미탐색 영역 이득 가중치 (점수 = 거리 - gain * 경계길이)
+        # Unexplored area gain weight (score = distance - gain * boundary_length)
         p('gain', 1.5)
-        # 도달 실패 목표 블랙리스트 반경 [m]
+        # Blacklist radius for unreachable goals [m]
         p('blacklist_radius', 0.6)
-        # 블랙리스트 유효 시간 [초] (0일 경우 영구 등록)
+        # Blacklist TTL [s] (0 for permanent)
         p('blacklist_ttl', 120.0)
-        # 블랙리스트에 넣지 않습니다 (아래 준비 판정과 함께 씁니다).
         p('startup_grace', 15.0)
-        # 같은 지점에서 이 횟수만큼 실패하면 영구 포기합니다.
-        # 장애물 뒤 그늘처럼 원리적으로 도달 불가능한 미탐색이 남는데,
-        # TTL 만 있으면 그 한 곳 때문에 탐사가 영원히 안 끝납니다.
+        # Maximum retries for goal failure at same location
         p('max_retries', 2)
-        # 목표를 보낸 뒤 최소 이만큼 [s] 은 바꾸지 않습니다. 매 틱 목표를
-        # 갈아치우면 Nav2 가 계속 preemption 만 처리하다 한 발도 못 뗍니다.
+        # Minimum goal dwell time before switching [s]
         p('min_goal_dwell', 5.0)
-        # 한 목표에 이만큼 [s] 매달리면 포기하고 블랙리스트에 넣습니다.
+        # Goal timeout [s]
         p('goal_timeout', 90.0)
-        # 이 시간 [s] 동안 min_progress 미만으로 움직이면 끼인 것으로 봅니다.
+        # Stuck detection timeout [s]
         p('stuck_time', 30.0)
         p('min_progress', 0.15)
-        # Nav2 가 성공을 반환했는데 로봇이 목표에서 이보다 멀면 "가짜 성공"
-        # 으로 봅니다. NavfnPlanner 는 목표가 도달 불가(장애물 팽창 영역 안)
-        # 이면 tolerance(0.5 m) 안의 가장 가까운 지점으로 경로를 잘라 주는데,
-        # 그 지점이 이미 로봇 위치이면 컨트롤러가 즉시 "Reached the goal!" 을
-        # 냅니다. 이걸 도착으로 믿으면 같은 목표를 무한히 반복합니다
-        # (실측: 같은 지점에 253회 "도착").
+        # Arrival tolerance [m]
         p('arrive_tolerance', 0.5)
-        # 현재 목표 주변 이 반경 [m] 에 프론티어가 남아 있으면 목표를 유지합니다.
-        # 없어졌다 = 이미 그쪽을 다 봤다 = 다른 데로 갈 때입니다.
+        # Radius to consider goal cluster stale [m]
         p('goal_stale_radius', 0.7)
-        # 프론티어가 연속 이만큼 없으면 탐사 완료로 봅니다. RTAB-Map 격자는
-        # 한 틱 비었다가 다시 나타나기도 해서 한 번으로 끝내면 안 됩니다.
+        # Consecutive empty frontier ticks required to finish
         p('done_ticks', 3)
-        # 탐사가 끝나면 출발점으로 돌아갈지
+        # Return to home pose after exploration completes
         p('return_home', True)
-        # 복귀 목표가 실패했을 때 다시 걸어 볼 횟수.
-        # 0 이면 한 번만 보냅니다(예전 동작 = 실패 시 영구 정차).
+        # Retries for returning home
         p('home_retries', 5)
-        # 전체 제한 시간 [s]. 0 이면 무제한.
+        # Overall exploration timeout [s] (0 for unlimited)
         p('explore_timeout', 0.0)
         p('publish_markers', True)
-        # 점유격자 임계값 (0~100). RTAB-Map 은 0/100 만 쓰지만 일반화해 둡니다.
+        # Occupancy thresholds
         p('free_threshold', 25)
         p('occupied_threshold', 65)
         p('robot_frame', 'base_footprint')
+        p('map_frame', 'map')
 
         g = lambda n: self.get_parameter(n).value  # noqa: E731
         self.period = g('period')
         self.min_cells = int(g('min_frontier_cells'))
-        self.clearance = g('clearance')
         self.min_clearance = g('min_clearance')
+        self.clearance = g('clearance')
         self.gain = g('gain')
         self.blacklist_radius = g('blacklist_radius')
         self.blacklist_ttl = g('blacklist_ttl')
-        self.max_retries = int(g('max_retries'))
         self.startup_grace = g('startup_grace')
+        self.max_retries = int(g('max_retries'))
         self.min_goal_dwell = g('min_goal_dwell')
         self.goal_timeout = g('goal_timeout')
         self.stuck_time = g('stuck_time')
@@ -103,165 +92,117 @@ class FrontierExplorer(Node):
         self.return_home = g('return_home')
         self.home_retries = int(g('home_retries'))
         self.explore_timeout = g('explore_timeout')
-        self.publish_markers = g('publish_markers')
-        self.free_thr = g('free_threshold')
-        self.occ_thr = g('occupied_threshold')
+        self.pub_markers = g('publish_markers')
+        self.free_thr = int(g('free_threshold'))
+        self.occ_thr = int(g('occupied_threshold'))
         self.robot_frame = g('robot_frame')
+        self.map_frame = g('map_frame')
+
+        self.buf = Buffer()
+        self.tl = TransformListener(self.buf, self)
+        self.ac = ActionClient(self, NavigateToPose, 'navigate_to_pose')
+        self.markers = self.create_publisher(MarkerArray, 'frontier_markers', 10)
 
         self.map_msg = None
-        # [[(x, y), 만료시각_s 또는 None(영구), 실패횟수]]
-        self.blacklist = []
+        self.blacklist = []  # [[(x, y), expire_time_s, fail_count]]
         self.goal_handle = None
         self.goal_xy = None
         self.goal_time = None
-        # 목표 일련번호. 새 목표를 보내면 이전 목표는 Nav2 가 preemption 으로
-        # 끝내면서 ABORTED 를 돌려줍니다. 그건 "실패"가 아니라 "내가 밀어낸 것"
-        # 이므로, 지금 번호와 다른 결과는 전부 무시해야 합니다.
-        # (이 구분이 없으면 멀쩡한 프론티어가 전부 블랙리스트로 갑니다)
         self.goal_seq = 0
         self.all_blacklisted_warned = False
         self.empty_ticks = 0
-        self.finished = False
+
+        self.home = None
         self.going_home = False
         self.home_tries = 0
-        self.home = None
+        self.finished = False
+
         self.last_pose = None
-        self.best_gap = None      # 이번 목표에서 지금까지 가장 가까웠던 거리
+        self.best_gap = None
         self.last_progress_t = None
-        self.visited = 0             # 성공한 목표 수
+        self.visited = 0
         self.t0 = None
 
-        # /map 은 RELIABLE + TRANSIENT_LOCAL 이고, RTAB-Map 은 지도가 바뀔 때만
-        # 발행합니다. 기본 QoS(VOLATILE)로 구독하면 로봇이 멈춰 있는 동안
-        # 붙었을 때 마지막 지도를 못 받아 영영 기다립니다 (실측으로 확인).
-        # TRANSIENT_LOCAL 로 맞춰야 붙는 즉시 최신 지도를 받습니다.
         latched = QoSProfile(depth=1)
         latched.reliability = QoSReliabilityPolicy.RELIABLE
         latched.durability = QoSDurabilityPolicy.TRANSIENT_LOCAL
-        self.create_subscription(OccupancyGrid, 'map', self._on_map, latched)
+        self.create_subscription(OccupancyGrid, '/map', self._on_map, latched)
 
-        # Nav2 가 "정말 목표를 받을 수 있는가"의 판정 기준
-        # ------------------------------------------------------------------
-        # navigate_to_pose 액션 서버의 존재만으로는 부족합니다. 그건
-        # bt_navigator 가 활성이라는 뜻일 뿐이고, planner_server 가 아직
-        # 활성화 중이거나 전역 코스트맵이 /map 크기로 자리를 잡기 전이면
-        # 모든 목표가 즉시 ABORT 됩니다. 그 실패로 지점을 판단하면 프론티어가
-        # 통째로 블랙리스트에 들어가 탐사가 시작도 못 합니다 (실측 2회).
-        #
-        # 전역 코스트맵이 발행됐다는 것은 planner_server 가 활성이고 코스트맵이
-        # 준비됐다는 직접 증거이므로, 이것을 준비 신호로 씁니다.
-        # (nav2_params.yaml 의 always_send_full_costmap: True 라 주기적으로 옵니다)
         self.costmap_seen = None
         self.costmap = None
         self.create_subscription(
             OccupancyGrid, 'global_costmap/costmap', self._on_costmap, latched)
-        # 외부에서 탐사를 잠시 멈추는 스위치 (auto_dock.py 가 씁니다).
-        # 충전 복귀는 DockRobot 이 내부적으로 NavigateToPose 를 거는데,
-        # 여기서 2초마다 새 목표를 계속 보내면 그 이동을 밀어내 버려
-        # 로봇이 도크로 가지 못합니다.
-        # 기본값은 활성입니다 — 이 토픽을 아무도 발행하지 않는 구성에서
-        # 탐사가 멈춰 있으면 안 되기 때문입니다.
         self.paused = False
         self.create_subscription(Bool, 'exploration_enabled', self._on_enable, 10)
 
-        self.tf_buf = Buffer()
-        self.tf_listener = TransformListener(self.tf_buf, self)
-        self.ac = ActionClient(self, NavigateToPose, 'navigate_to_pose')
-        self.markers = self.create_publisher(MarkerArray, 'frontiers', 1)
-
         self.create_timer(self.period, self._tick)
-        self.get_logger().info(
-            '프론티어 탐사 시작 대기 — /map 과 navigate_to_pose 를 기다립니다')
 
-    # ------------------------------------------------------------------ 입력
+        self.get_logger().info(
+            'Waiting for /map and navigate_to_pose action server to start exploration')
+
+    # ---------------- Inputs ----------------
     def _on_map(self, msg):
         self.map_msg = msg
 
     def _on_enable(self, msg):
-        want_pause = not msg.data
-        if want_pause == self.paused:
-            return
-        self.paused = want_pause
-        if self.paused:
-            # 진행 중이던 목표를 반드시 취소합니다. 그냥 두면 Nav2 가
-            # 계속 그쪽으로 몰고 가면서 도킹용 이동과 싸웁니다.
+        val = bool(msg.data)
+        if not val and not self.paused:
+            self.paused = True
             self._cancel()
-            self.get_logger().info('탐사 일시 정지 (외부 요청)')
-        else:
-            self.get_logger().info('탐사 재개')
+            self.get_logger().info('Exploration paused by external request')
+        elif val and self.paused:
+            self.paused = False
+            self.get_logger().info('Exploration resumed')
 
     def _on_costmap(self, msg):
-        # 준비 판정만 하던 것을 **격자 자체도 들고 있도록** 바꿉니다.
-        # 목표를 고를 때 /map 만 보면 안 되기 때문입니다 — 아래 참고.
         self.costmap = msg
         if self.costmap_seen is None:
             self.costmap_seen = self.get_clock().now()
-            self.get_logger().info('전역 코스트맵 확인 — Nav2 준비됨')
+            self.get_logger().info('Global costmap verified -- Nav2 ready')
 
     def _costmap_ok(self, xy):
-        """이 지점이 **전역 코스트맵에서도** 설 수 있는 자리인가.
-
-        목표는 /map 에서 고르는데 경로는 코스트맵으로 계획합니다. 코스트맵에는
-        팽창(0.40 m)과 STVL 3D 장애물이 더 있어서, /map 에서 자유였던 셀이
-        내접(99)/치명(100)일 수 있습니다. 그런 목표를 보내면 BT 가 복구를
-        6회 돌며 약 60초를 태운 뒤에야 포기합니다 (실측 59초).
-
-        미탐색(-1)은 통과시킵니다 — 탐사는 원래 그쪽으로 가는 일이고
-        플래너도 allow_unknown: true 입니다.
-        """
+        """Check if candidate goal cell is free in global costmap."""
         cm = self.costmap
         if cm is None:
-            return True                     # 아직 모르면 막지 않습니다
+            return True
         i = cm.info
         c = int((xy[0] - i.origin.position.x) / i.resolution)
         r = int((xy[1] - i.origin.position.y) / i.resolution)
         if not (0 <= c < i.width and 0 <= r < i.height):
-            return False                    # 코스트맵 밖 = 갈 수 없음
+            return False
         v = cm.data[r * i.width + c]
-        return v < 99                       # 99=내접, 100=치명
+        return v < 99
 
     def _robot_xy(self):
         try:
-            t = self.tf_buf.lookup_transform(
-                self.map_msg.header.frame_id, self.robot_frame, Time())
+            tf = self.buf.lookup_transform(
+                self.map_frame, self.robot_frame, rclpy.time.Time(),
+                timeout=rclpy.duration.Duration(seconds=0.1))
+            return tf.transform.translation.x, tf.transform.translation.y
         except Exception:
             return None
-        return t.transform.translation.x, t.transform.translation.y
 
-    # -------------------------------------------------------------- 프론티어
+    # ---------------- Frontiers ----------------
     def _frontiers(self):
-        """(중심 xy, 셀 수, 프론티어 셀 좌표배열) 목록을 돌려줍니다."""
+        """Extract frontier clusters -> list of (center_xy, cell_count, cell_points)."""
         m = self.map_msg
         info = m.info
         res = info.resolution
-        # OccupancyGrid.data 는 row-major, 행이 y 입니다.
         grid = np.asarray(m.data, dtype=np.int16).reshape(info.height, info.width)
 
         free = (grid >= 0) & (grid <= self.free_thr)
         unknown = grid < 0
-        occupied = grid >= self.occ_thr
+        occupied = grid > self.occ_thr
 
-        # 4-이웃 중 하나라도 미탐색이면 프론티어
         nbr = np.zeros_like(unknown)
         nbr[1:, :] |= unknown[:-1, :]
         nbr[:-1, :] |= unknown[1:, :]
         nbr[:, 1:] |= unknown[:, :-1]
         nbr[:, :-1] |= unknown[:, 1:]
         frontier = free & nbr
-        if not frontier.any():
-            return []
 
-        # 여유값으로 프론티어를 "걸러내면" 안 됩니다 (실측으로 확인)
-        # ------------------------------------------------------------------
-        # 예전에는 장애물을 clearance 만큼 팽창시켜 프론티어에서 빼고, 남은
-        # 것으로 덩어리 크기를 쟀습니다. 그랬더니 폭 0.60 m 통로 입구에서
-        # 살아남는 띠가 2셀뿐이라 최소 8셀 기준에 미달해 통로 4개가 통째로
-        # 사라졌고, 탐사가 80초 만에 "다 봤다"며 끝났습니다.
-        # 크기 판정은 원본 프론티어로 하고, 여유값은 "덩어리 안 어디를
-        # 목표로 찍을까"에만 씁니다.
         dist = ndimage.distance_transform_edt(~occupied) * res
 
-        # 8-연결로 덩어리 묶기
         lbl, n = ndimage.label(frontier, structure=np.ones((3, 3), bool))
         out = []
         for i in range(1, n + 1):
@@ -270,37 +211,38 @@ class FrontierExplorer(Node):
                 continue
             d = dist[ys, xs]
             if d.max() < self.min_clearance:
-                continue          # 로봇이 물리적으로 못 들어가는 틈
-            # 여유가 충분한 셀 중 덩어리 중심에 가장 가까운 것을 고릅니다.
-            # 충분한 게 없으면 그나마 가장 넓은 셀로 갑니다.
+                continue
             cx, cy = xs.mean(), ys.mean()
             ok = np.nonzero(d >= min(self.clearance, d.max()))[0]
             k = ok[np.argmin((xs[ok] - cx) ** 2 + (ys[ok] - cy) ** 2)]
             wx = info.origin.position.x + (xs[k] + 0.5) * res
             wy = info.origin.position.y + (ys[k] + 0.5) * res
-            wxs = info.origin.position.x + (xs + 0.5) * res
-            wys = info.origin.position.y + (ys + 0.5) * res
-            out.append(((wx, wy), len(xs), np.stack([wxs, wys], axis=1)))
+            pts = np.column_stack([
+                info.origin.position.x + (xs + 0.5) * res,
+                info.origin.position.y + (ys + 0.5) * res])
+            out.append(((wx, wy), len(xs), pts))
         return out
 
     def _now(self):
         return self.get_clock().now().nanoseconds * 1e-9
 
     def _blacklisted(self, xy):
-        """(막혀 있는가, 영구인가)"""
         t = self._now()
         self.blacklist = [e for e in self.blacklist if e[1] is None or e[1] > t]
         hits = [e for e in self.blacklist if math.dist(xy, e[0]) < self.blacklist_radius]
-        return bool(hits), any(e[1] is None for e in hits)
+        if not hits:
+            return False, False
+        perm = any(e[1] is None for e in hits)
+        return True, perm
 
-    # ------------------------------------------------------------------ 목표
+    # ---------------- Goals ----------------
     def _send_goal(self, xy, from_xy):
         yaw = math.atan2(xy[1] - from_xy[1], xy[0] - from_xy[0])
         g = NavigateToPose.Goal()
-        g.pose.header.frame_id = self.map_msg.header.frame_id
         g.pose.header.stamp = self.get_clock().now().to_msg()
-        g.pose.pose.position.x = float(xy[0])
-        g.pose.pose.position.y = float(xy[1])
+        g.pose.header.frame_id = self.map_frame
+        g.pose.pose.position.x = xy[0]
+        g.pose.pose.position.y = xy[1]
         g.pose.pose.orientation.z = math.sin(yaw / 2.0)
         g.pose.pose.orientation.w = math.cos(yaw / 2.0)
 
@@ -308,25 +250,21 @@ class FrontierExplorer(Node):
         seq = self.goal_seq
         self.goal_xy = xy
         self.goal_time = self.get_clock().now()
-        self.last_progress_t = self.goal_time
-        self.last_pose = from_xy
         self.best_gap = None
-        self.goal_handle = None
+        self.last_progress_t = self.goal_time
+
         fut = self.ac.send_goal_async(g)
         fut.add_done_callback(lambda f: self._on_accepted(seq, f))
         self.get_logger().info(
-            '목표 #%d -> (%.2f, %.2f)  거리 %.2f m'
+            'Goal #%d -> (%.2f, %.2f), distance %.2f m'
             % (seq, xy[0], xy[1], math.dist(xy, from_xy)))
 
     def _on_accepted(self, seq, fut):
         if seq != self.goal_seq:
-            return                      # 이미 다음 목표로 넘어갔음
+            return
         gh = fut.result()
         if gh is None or not gh.accepted:
-            # 거절 = "이 지점이 나쁘다"가 아니라 "서버가 아직 못 받는다"
-            # 입니다 (bt_navigator 가 activate 되기 전 등). 블랙리스트에
-            # 넣으면 안 되고, 그냥 다음 틱에 다시 시도하면 됩니다.
-            self.get_logger().info('Nav2 가 아직 목표를 받지 않습니다 — 재시도')
+            self.get_logger().info('Nav2 action server rejected goal -- retrying next tick')
             self.goal_xy = None
             return
         self.goal_handle = gh
@@ -334,103 +272,91 @@ class FrontierExplorer(Node):
 
     def _on_result(self, seq, fut):
         if seq != self.goal_seq:
-            # 내가 새 목표로 밀어낸(preempt) 예전 목표의 결과입니다.
-            # Nav2 는 이때 ABORTED 를 돌려주는데 실패가 아니므로 무시합니다.
             return
         status = fut.result().status
         if status == GoalStatus.STATUS_SUCCEEDED:
             me = self._robot_xy()
-            gap = math.dist(me, self.goal_xy) if me and self.goal_xy else 0.0
+            gap = math.dist(me, self.goal_xy) if me else 0.0
             if gap > self.arrive_tolerance:
                 self.get_logger().warn(
-                    '성공했다는데 목표에서 %.2f m 떨어져 있음 — 도달 불가로 처리' % gap)
+                    'Goal reported succeeded but robot is %.2f m away -- marking unreachable' % gap)
                 self._abandon()
                 return
             self.visited += 1
-            self.get_logger().info('도착 (%d 번째)' % self.visited)
+            self.get_logger().info('Goal reached (total %d)' % self.visited)
             self.goal_handle = None
             self.goal_xy = None
         elif status == GoalStatus.STATUS_CANCELED:
-            self.goal_handle = None
-            self.goal_xy = None
+            pass
         elif status == GoalStatus.STATUS_UNKNOWN:
-            # 서버가 사라졌거나 결과를 제대로 못 받은 경우입니다.
-            # 지점의 문제가 아니므로 블랙리스트에 넣지 않습니다.
-            self.get_logger().info('결과 상태 불명 — 재시도')
+            self.get_logger().info('Result status unknown -- retrying')
             self._cancel()
         else:
-            self.get_logger().warn('목표 실패(status=%d)' % status)
+            self.get_logger().warn('Goal failed (status=%d)' % status)
             self._abandon()
 
     def _in_grace(self):
         if self.costmap_seen is None:
             return True
-        dt = (self.get_clock().now() - self.costmap_seen).nanoseconds * 1e-9
-        return dt < self.startup_grace
+        return (self.get_clock().now() - self.costmap_seen).nanoseconds * 1e-9 < self.startup_grace
 
-    def _abandon(self):
-        """현재 목표를 블랙리스트에 넣고 중단합니다. (취소까지 함께 합니다)"""
+    def _abandon(self, hard=True):
         if self._in_grace():
-            # Nav2 가 아직 자리를 잡는 중입니다. 이 실패로 지점을 판단하면 안 됩니다.
-            self.get_logger().info('기동 유예 중 실패 — 블랙리스트에 넣지 않고 재시도')
+            self.get_logger().info('Failure during startup grace period -- retrying without blacklisting')
             self._cancel()
             return
         if self.goal_xy:
             xy = self.goal_xy
-            hit = next((e for e in self.blacklist
-                        if math.dist(xy, e[0]) < self.blacklist_radius), None)
-            fails = (hit[2] if hit else 0) + 1
-            if hit:
-                self.blacklist.remove(hit)
-            if fails >= self.max_retries or self.blacklist_ttl <= 0:
+            existing = [e for e in self.blacklist if math.dist(xy, e[0]) < self.blacklist_radius]
+            fails = (existing[0][2] + 1) if existing else 1
+            self.blacklist = [e for e in self.blacklist if math.dist(xy, e[0]) >= self.blacklist_radius]
+            if hard or fails >= self.max_retries:
                 self.blacklist.append([xy, None, fails])
                 self.get_logger().warn(
-                    '(%.2f, %.2f) %d 회 실패 — 도달 불가로 보고 영구 제외' % (xy[0], xy[1], fails))
+                    '(%.2f, %.2f) failed %d times -- permanently blacklisted' % (xy[0], xy[1], fails))
             else:
                 self.blacklist.append([xy, self._now() + self.blacklist_ttl, fails])
         self._cancel()
 
     def _least_failed(self, clusters):
-        """임시 블랙리스트에 걸린 후보 중 실패가 가장 적은 지점.
-
-        영구 제외(만료시각 None)는 제외합니다. 후보가 없으면 None.
-        """
         best, best_fails = None, None
         for c, _n, _pts in clusters:
-            hit = next((e for e in self.blacklist
-                        if e[1] is not None
-                        and math.dist(c, e[0]) < self.blacklist_radius), None)
-            if hit is None:
+            blocked, perm = self._blacklisted(c)
+            if perm or not blocked:
                 continue
-            if best_fails is None or hit[2] < best_fails:
-                best, best_fails = c, hit[2]
+            hits = [e for e in self.blacklist if math.dist(c, e[0]) < self.blacklist_radius]
+            fails = hits[0][2] if hits else 0
+            if best_fails is None or fails < best_fails:
+                best, best_fails = c, fails
         return best
 
     def _cancel(self):
         if self.goal_handle is not None:
-            self.goal_handle.cancel_goal_async()
+            try:
+                self.goal_handle.cancel_goal_async()
+            except Exception:
+                pass
         self.goal_handle = None
         self.goal_xy = None
 
-    # ------------------------------------------------------------------ 본체
+    # ---------------- Core Loop ----------------
     def _tick(self):
         if self.finished:
-            # 탐사는 끝났지만 복귀는 아직입니다. 여기서 그냥 반환하면
-            # 복귀 실패 시 로봇이 영구 정차합니다.
             if self.going_home and not self.paused:
                 self._tick_home()
             return
-        if self.paused or self.map_msg is None:
+
+        if self.map_msg is None or self.paused:
             return
         if not self.ac.server_is_ready() or self.costmap_seen is None:
-            return          # Nav2 가 아직 목표를 처리할 수 없는 상태
+            return
         now = self.get_clock().now()
         if self.t0 is None:
             self.t0 = now
-            self.get_logger().info('탐사 개시')
+            self.get_logger().info('Starting exploration')
         if self.explore_timeout > 0 and \
                 (now - self.t0).nanoseconds * 1e-9 > self.explore_timeout:
-            self._finish('제한 시간 도달')
+            self._finish('Explore timeout reached')
             return
 
         me = self._robot_xy()
@@ -440,176 +366,157 @@ class FrontierExplorer(Node):
             self.home = me
 
         clusters = self._frontiers()
-        if self.publish_markers:
-            self._draw(clusters)
 
-        # 프론티어가 정말 없어야 탐사 완료입니다. 후보가 전부 블랙리스트인
-        # 것은 "다 봤다"가 아니라 "지금은 못 간다"이므로, TTL 이 풀릴 때까지
-        # 기다립니다. 여기서 끝내 버리면 한 번의 실패가 탐사를 통째로 끝냅니다.
         if not clusters:
             self.empty_ticks += 1
             if self.empty_ticks >= self.done_ticks:
                 self._cancel()
-                self._finish('남은 프론티어 없음')
+                self._finish('No remaining frontiers')
             return
         self.empty_ticks = 0
 
-        cands, temporary, rejected = [], 0, 0
-        for c, n, _ in clusters:
-            blocked, permanent = self._blacklisted(c)
-            if blocked:
-                if not permanent:
-                    temporary += 1
+        cands = []
+        temporary = 0
+        rejected = 0
+        for c, n_cells, pts in clusters:
+            blocked, perm = self._blacklisted(c)
+            if perm:
                 continue
-            # **보내기 전에 전역 코스트맵으로 검증합니다.**
-            # /map 기준으로 고른 목표가 코스트맵에서는 벽 속(내접/치명)일
-            # 수 있고, 그러면 BT 가 60초를 복구에 태운 뒤에야 포기합니다.
+            if blocked:
+                temporary += 1
+                continue
             if not self._costmap_ok(c):
                 rejected += 1
                 continue
-            cands.append((c, n))
-        if rejected:
-            self.get_logger().debug('코스트맵에서 설 수 없는 후보 %d 곳 제외' % rejected)
+            dist = math.dist(me, c)
+            score = dist - self.gain * (n_cells * self.map_msg.info.resolution)
+            cands.append((score, c, pts))
+
         if not cands:
             if temporary == 0:
-                # 남은 게 전부 "영구 제외" — 장애물 뒤 그늘처럼 갈 수 없는
-                # 미탐색만 남았다는 뜻이라 더 기다려도 달라지지 않습니다.
                 self._cancel()
-                self._finish('도달 가능한 미탐색 없음 (그늘 %d 곳 제외)' % len(clusters))
+                self._finish('No reachable frontiers remaining (shaded: %d)' % len(clusters))
                 return
-            # 제자리에서 TTL 이 풀리기를 기다리면 안 됩니다 — **안 움직이면
-            # 120초 뒤 상황이 지금과 똑같습니다.** 임시 블랙리스트의 취지가
-            # "나중에 다른 위치에서 재시도"인데 기다림이 아무것도 바꾸지
-            # 못합니다 (실측: 갇힘 시간의 81%, 한 지점에서 181초 연속 정차).
-            # 그래서 실패가 가장 적은 곳으로라도 다시 갑니다. 실패 횟수는
-            # 계속 누적되므로 max_retries 에 닿으면 탐사는 정상 종료됩니다.
             retry = self._least_failed(clusters)
             if retry is not None:
                 if not self.all_blacklisted_warned:
                     self.get_logger().warn(
-                        '남은 프론티어 %d 곳이 전부 블랙리스트 — 제자리 대기 대신 '
-                        '가장 덜 실패한 곳으로 재시도합니다' % len(clusters))
+                        'All %d frontiers blacklisted -- retrying least failed target' % len(clusters))
                     self.all_blacklisted_warned = True
                 if self.goal_xy is None:
                     self._send_goal(retry, me)
             return
+
         self.all_blacklisted_warned = False
+        cands.sort(key=lambda x: x[0])
+        best = cands[0][1]
 
-        res = self.map_msg.info.resolution
-        best, _ = min(cands, key=lambda cn: math.dist(me, cn[0]) - self.gain * cn[1] * res)
-
-        # 진행 중인 목표가 있으면 바꿀 이유가 있을 때만 바꿉니다.
         if self.goal_xy is not None:
             elapsed = (now - self.goal_time).nanoseconds * 1e-9
-            # 보낸 직후에는 무조건 유지합니다. 안 그러면 Nav2 가 preemption 만
-            # 반복 처리하다 한 발도 못 뗍니다 (실제로 그렇게 동작했습니다).
             if elapsed < self.min_goal_dwell:
                 return
             if elapsed > self.goal_timeout:
-                self.get_logger().warn('목표 시간 초과 (%.0f s) — 포기' % elapsed)
+                self.get_logger().warn('Goal timed out (%.0f s) -- abandoning' % elapsed)
                 self._abandon()
                 return
-            # 진행도는 **이동 거리가 아니라 목표까지 남은 거리**로 잽니다.
-            # 이동 거리로 재면 BT 복구의 BackUp(0.35 m)이 min_progress(0.15)를
-            # 매번 넘겨 **복구가 돌 때마다 끼임 타이머가 초기화**됩니다.
-            # 제자리에서 앞뒤로 흔들리는데 "계속 전진 중"으로 보여, 실측에서
-            # 59초짜리 복구 루프 동안 30초 감지가 한 번도 안 울렸습니다.
             gap = math.dist(me, self.goal_xy)
             if self.best_gap is None or gap < self.best_gap - self.min_progress:
                 self.best_gap, self.last_progress_t = gap, now
             elif (now - self.last_progress_t).nanoseconds * 1e-9 > self.stuck_time:
                 self.get_logger().warn(
-                    '%.0f 초간 목표에 가까워지지 못함 (남은 %.2f m) — 포기'
+                    'No progress towards goal for %.0f s (gap %.2f m) -- abandoning'
                     % (self.stuck_time, gap))
                 self._abandon(hard=False)
                 return
-            # 목표 근처에 프론티어가 남아 있으면 계속 갑니다.
             alive = any(
                 np.any(np.hypot(pts[:, 0] - self.goal_xy[0],
                                 pts[:, 1] - self.goal_xy[1]) < self.stale_radius)
-                for _, _, pts in clusters)
+                for _c, _n, pts in clusters)
             if alive:
                 return
-            # 명시적 cancel 을 보내지 않습니다. 새 목표를 보내면 Nav2 가
-            # 알아서 preemption 으로 갈아탑니다. cancel 을 따로 보내면 그것이
-            # 새 목표보다 늦게 도착해 갓 받은 목표를 취소해 버릴 수 있습니다.
-            self.get_logger().info('목표 지점이 이미 밝혀짐 — 다음으로')
+            self.get_logger().info('Goal area cleared -- switching to next frontier')
 
         self._send_goal(best, me)
 
+        if self.pub_markers:
+            self._draw(clusters)
+
     def _finish(self, why):
         self.finished = True
-        dt = (self.get_clock().now() - self.t0).nanoseconds * 1e-9 if self.t0 else 0.0
+        dt = (self.get_clock().now() - (self.t0 or self.get_clock().now())).nanoseconds * 1e-9
         self.get_logger().info(
-            '=== 탐사 종료: %s ===  방문 %d 곳, 포기 %d 곳, %.0f 초'
+            '=== Exploration Complete: %s === visited %d, abandoned %d, %.0f s'
             % (why, self.visited, len(self.blacklist), dt))
         if self.return_home and self.home is not None:
-            self.get_logger().info('출발점 (%.2f, %.2f) 으로 복귀' % self.home)
+            self.get_logger().info('Returning to home pose (%.2f, %.2f)' % self.home)
             self.going_home = True
             self.home_tries = 0
             self._send_home()
 
     def _send_home(self):
-        """복귀 목표를 보낸다. 실패하면 다시 건다.
-
-        예전에는 여기서 한 번만 보냈습니다. 그런데 `finished` 가 되돌릴 수
-        없는 래치라, 복귀 목표가 한 번 실패하면 `_tick` 이 즉시 반환하면서
-        **로봇이 그 자리에 영구 정차**했습니다 (미로 실측: 한 지점에서
-        181초 연속 '목표 없음', 갇힘 시간의 81%).
-        """
         self.home_tries += 1
         self._send_goal(self.home, self._robot_xy() or self.home)
 
     def _tick_home(self):
-        """복귀 중에는 목표가 살아 있는지만 지킵니다."""
         me = self._robot_xy()
         if me is not None and math.dist(me, self.home) <= self.arrive_tolerance:
-            # 실제로 도착했으면 끝냅니다. 이 확인이 없으면 도착 후에도
-            # goal_handle 이 비어 있어 복귀 목표를 무한히 재전송합니다.
-            self.get_logger().info('출발점 복귀 완료')
+            self.get_logger().info('Returned home successfully')
             self.going_home = False
             return
         if self.goal_handle is None and self.goal_xy is None:
             if self.home_tries >= self.home_retries:
                 self.get_logger().warn(
-                    '복귀 %d 회 실패 — 현재 자리에 정차합니다' % self.home_tries)
+                    'Return home failed %d times -- stopping at current location' % self.home_tries)
                 self.going_home = False
                 return
-            self.get_logger().info('복귀 재시도 (%d/%d)'
+            self.get_logger().info('Retrying return home (%d/%d)'
                                    % (self.home_tries + 1, self.home_retries))
-            self._send_home()
-        self.get_logger().info(
-            '지도는 RTAB-Map 데이터베이스(~/.ros/orinbot_rtabmap.db)에 이미 저장돼 있습니다. '
-            "이미지 파일로 뽑으려면: ros2 run nav2_map_server map_saver_cli -f ~/my_map")
+            self.send_home()
 
-    # ---------------------------------------------------------------- 시각화
+    # ---------------- Visualization ----------------
     def _draw(self, clusters):
         arr = MarkerArray()
         d = Marker()
+        d.header.frame_id = self.map_frame
+        d.header.stamp = self.get_clock().now().to_msg()
+        d.ns = 'frontiers'
+        d.id = 0
         d.action = Marker.DELETEALL
         arr.markers.append(d)
-        for i, (c, n, pts) in enumerate(clusters):
+
+        for i, (c, _n, _pts) in enumerate(clusters):
+            blocked, perm = self._blacklisted(c)
             m = Marker()
-            m.header.frame_id = self.map_msg.header.frame_id
+            m.header.frame_id = self.map_frame
             m.header.stamp = self.get_clock().now().to_msg()
-            m.ns, m.id, m.type, m.action = 'frontier', i, Marker.POINTS, Marker.ADD
-            m.scale.x = m.scale.y = 0.05
-            hot = self.goal_xy is not None and math.dist(c, self.goal_xy) < 0.3
-            m.color = ColorRGBA(r=1.0, g=0.2 if hot else 0.8, b=0.0, a=1.0)
-            m.points = [Point(x=float(x), y=float(y), z=0.05) for x, y in pts]
+            m.ns = 'frontiers'
+            m.id = i + 1
+            m.type = Marker.SPHERE
+            m.action = Marker.ADD
+            m.pose.position.x = c[0]
+            m.pose.position.y = c[1]
+            m.pose.position.z = 0.1
+            m.pose.orientation.w = 1.0
+            m.scale.x = m.scale.y = m.scale.z = 0.25
+            if perm:
+                m.color = ColorRGBA(r=1.0, g=0.0, b=0.0, a=0.8)
+            elif blocked:
+                m.color = ColorRGBA(r=1.0, g=0.5, b=0.0, a=0.8)
+            else:
+                m.color = ColorRGBA(r=0.0, g=1.0, b=0.2, a=0.8)
             arr.markers.append(m)
         self.markers.publish(arr)
 
 
 def main():
     rclpy.init()
-    node = FrontierExplorer()
+    n = FrontierExplorer()
     try:
-        rclpy.spin(node)
+        rclpy.spin(n)
     except KeyboardInterrupt:
         pass
     finally:
-        node.destroy_node()
+        n.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()
 

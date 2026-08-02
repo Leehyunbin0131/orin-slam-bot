@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Visual Odometry 보정 변환(vodom -> odom)을 일정한 주기 및 최신 타임스탬프 기반으로 재발행하는 노드.
+"""Node that periodically republishes visual odometry correction TF (vodom -> odom) at a constant rate.
 
-Visual Odometry 연산 지연 및 타임스탬프 비동기화로 인한 Nav2 TF 조회 실패를 방지하기 위해
-T(vodom->odom) = T(vodom->base) * T(odom->base)^-1 관계식을 연산하여 주기적으로 재발행합니다.
+Computes T(vodom->odom) = T(vodom->base) * T(odom->base)^-1 to prevent Nav2 TF lookup timeouts
+caused by processing delays in visual odometry.
 """
 
 import numpy as np
@@ -16,7 +16,7 @@ from tf2_ros import Buffer, TransformBroadcaster, TransformListener
 
 
 def q_mult(a, b):
-    """쿼터니언 곱 (x, y, z, w 순서)."""
+    """Quaternion multiplication (x, y, z, w order)."""
     ax, ay, az, aw = a
     bx, by, bz, bw = b
     return np.array([
@@ -32,7 +32,7 @@ def q_conj(q):
 
 
 def q_rotate(q, v):
-    """벡터 v 를 쿼터니언 q 로 회전."""
+    """Rotate vector v by quaternion q."""
     qv = np.array([v[0], v[1], v[2], 0.0])
     return q_mult(q_mult(q, qv), q_conj(q))[:3]
 
@@ -47,7 +47,7 @@ class VodomTfRelay(Node):
         self.declare_parameter('wheel_odom_frame', 'odom')
         self.declare_parameter('base_frame', 'base_footprint')
         self.declare_parameter('publish_rate', 50.0)
-        # 타임스탬프 예측 오프셋 [초] (TF 조회 시 미래 외삽 오류 방지)
+        # Timestamp prediction offset [s] to prevent future extrapolation errors during TF lookup
         self.declare_parameter('tf_tolerance', 0.2)
 
         self.visual_frame = self.get_parameter('visual_odom_frame').value
@@ -60,7 +60,7 @@ class VodomTfRelay(Node):
         self.listener = TransformListener(self.buffer, self)
         self.broadcaster = TransformBroadcaster(self)
 
-        # 초기 항등 변환 (TF 체인 유지)
+        # Initial identity transform to maintain TF chain
         self.correction_t = np.zeros(3)
         self.correction_q = np.array([0.0, 0.0, 0.0, 1.0])
         self.have_correction = False
@@ -71,20 +71,20 @@ class VodomTfRelay(Node):
         self.create_timer(1.0 / rate, self.publish)
 
         self.get_logger().info(
-            '%s -> %s 보정 TF 를 %.0f Hz, %+.2fs 오프셋으로 재발행합니다.'
+            'Publishing %s -> %s correction TF at %.0f Hz with %+.2fs offset.'
             % (self.visual_frame, self.wheel_frame, rate, self.tf_tolerance))
 
     # ------------------------------------------------------------------
     def on_visual_odom(self, msg: Odometry):
-        """T(vodom->odom) = T(vodom->base) * T(odom->base)^-1 을 갱신."""
+        """Update T(vodom->odom) = T(vodom->base) * T(odom->base)^-1."""
         try:
             wheel = self.buffer.lookup_transform(
                 self.wheel_frame, self.base_frame,
                 Time.from_msg(msg.header.stamp),
                 timeout=Duration(seconds=0.1))
-        except Exception as exc:  # TF 아직 없음 / 시각 불일치
+        except Exception as exc:  # TF lookup unavailable or timestamp mismatch
             self.get_logger().warn(
-                '휠 오도메트리 TF 조회 실패: %s' % exc, throttle_duration_sec=5.0)
+                'Wheel odometry TF lookup failed: %s' % exc, throttle_duration_sec=5.0)
             return
 
         p = msg.pose.pose.position

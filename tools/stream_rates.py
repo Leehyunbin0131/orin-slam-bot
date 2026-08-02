@@ -1,6 +1,7 @@
-"""카메라 스트림 발행 주기 및 타임스탬프 동기화 상태 검증 스크립트.
+#!/usr/bin/env python3
+"""Camera stream publish rate and timestamp synchronization status verification script.
 
-    python3 stream_rates.py [측정초]
+    python3 tools/stream_rates.py [duration_s]
 """
 import sys
 import time
@@ -38,25 +39,25 @@ t0 = time.time()
 while time.time() - t0 < DUR:
     rclpy.spin_once(n, timeout_sec=0.05)
 
-print('=== %.0f 초간 스트림별 실제 주기 ===' % DUR)
+print('=== Stream rates over %.0f seconds ===' % DUR)
 for name in TOPICS:
     s = n.stamps[name]
     if len(s) < 2:
-        print('  %-8s 수신 %d 개 (없음/비활성)' % (name, len(s)))
+        print('  %-8s received %d frames (none/inactive)' % (name, len(s)))
         continue
     span = s[-1] - s[0]
-    print('  %-8s 수신 %4d 개, 시뮬시간 %.1f 초 -> %.1f Hz'
+    print('  %-8s received %4d frames, sim time %.1f s -> %.1f Hz'
           % (name, len(s), span, (len(s) - 1) / span if span > 0 else 0))
 
 a, b = n.stamps['infra1'], n.stamps['depth']
 if a and b:
     matched = sum(1 for x in a if any(abs(x - y) < 1e-4 for y in b))
-    print('\ninfra1 - depth 타임스탬프 완전 일치: %d / %d (%.0f%%)'
+    print('\ninfra1 - depth timestamp exact match: %d / %d (%.0f%%)'
           % (matched, len(a), 100.0 * matched / len(a)))
     worst = 0.0
     for x in a:
         if b:
             worst = max(worst, min(abs(x - y) for y in b))
-    print('최악 시차: %.4f 초' % worst)
+    print('Worst time difference: %.4f s' % worst)
 rclpy.shutdown()
 sys.exit(0)

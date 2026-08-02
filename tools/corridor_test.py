@@ -1,6 +1,7 @@
-"""통로 폭별 직진 통과 가능 여부 및 소요 시간 측정 스크립트.
+#!/usr/bin/env python3
+"""Corridor traversal performance measurement script per width.
 
-    python3 corridor_test.py [폭_m...]
+    python3 tools/corridor_test.py [width_m...]
 """
 import math
 import sys
@@ -14,7 +15,7 @@ from rclpy.node import Node
 from rclpy.time import Time
 from tf2_ros import Buffer, TransformListener
 
-# (라벨, 개구부 중심 y, 폭)
+# (Label, Opening center y, Width)
 _ALL = [('0.90m', 2.6, 0.90), ('0.70m', 0.6, 0.70),
         ('0.60m', -3.0, 0.60), ('0.55m', -1.6, 0.55)]
 CORRIDORS = [c for c in _ALL if len(sys.argv) < 2 or c[0] in sys.argv[1:]]
@@ -68,18 +69,18 @@ t = time.time()
 while time.time() - t < 4:
     rclpy.spin_once(n, timeout_sec=0.1)
 
-print('로봇 폭 0.40 m. 복도 깊이 0.60 m.')
-print('%-8s %-7s %-9s %-7s %-6s %s' % ('복도폭', '편측여유', '결과', '소요', '반전', '최종위치'))
+print('Robot width 0.40 m. Corridor depth 0.60 m.')
+print('%-8s %-7s %-9s %-7s %-6s %s' % ('Width', 'Margin', 'Result', 'Time', 'Flips', 'FinalPose'))
 for label, gy, wdt in CORRIDORS:
     st, dt, fl = n.goto(4.3, gy)
     x, y = n.pose()
     ok = x > 3.6
-    print('%-8s %-7s %-9s %5.0f초 %5d회  (%.2f, %.2f)'
+    print('%-8s %-7s %-9s %5.0fs %5d  (%.2f, %.2f)'
           % (label, '%.3f m' % ((wdt - 0.40) / 2),
-             '통과' if ok else ('실패(status=%s)' % st), dt, fl, x, y))
+             'PASSED' if ok else ('FAILED(status=%s)' % st), dt, fl, x, y))
     st2, dt2, fl2 = n.goto(*HOME)
     x2, y2 = n.pose()
     if math.hypot(x2 - HOME[0], y2 - HOME[1]) > 0.5:
-        print('         (복귀 실패 — 다음 시험이 부정확할 수 있음: %.2f, %.2f)' % (x2, y2))
+        print('         (Return home failed: %.2f, %.2f)' % (x2, y2))
 rclpy.shutdown()
 sys.exit(0)

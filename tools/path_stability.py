@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""전역 경로 방향 변동성 및 제어기 각속도 부호 반전 빈도 측정 스크립트.
+"""Global path direction fluctuation and controller angular velocity sign flip frequency script.
 
-    python3 tools/path_stability.py [측정초]
+    python3 tools/path_stability.py [duration_s]
 """
 
 import math
@@ -13,8 +13,8 @@ from geometry_msgs.msg import TwistStamped
 from nav_msgs.msg import Odometry, Path
 from rclpy.node import Node
 
-LOOK = 0.5          # 경로 초반 방향을 재는 거리 [m]
-FLIP = 0.35         # 이 각속도 이상에서 부호가 바뀌면 "반전" [rad/s]
+LOOK = 0.5          # Lookahead distance along path [m]
+FLIP = 0.35         # Angular velocity threshold for sign flip [rad/s]
 
 
 class PS(Node):
@@ -22,52 +22,55 @@ class PS(Node):
     def __init__(self):
         super().__init__('path_stability')
         self.xy = None
+        self.last_xy = None
+        self.dist = 0.0
+
         self.prev_head = None
-        self.turns = []          # 연속 경로 사이의 초반 방향 변화 [deg]
+        self.turns = []          # Heading angle change between consecutive plans [deg]
         self.plan_t = []
         self.wz = []             # (t, wz)
         self.flips = 0
         self.last_sign = 0
-        self.dist = 0.0
-        self.last_xy = None
-        self.create_subscription(Odometry, '/ground_truth/odom', self._odom, 10)
+
+        self.create_subscription(Odometry, '/odometry/filtered', self._odom, 10)
         self.create_subscription(Path, '/plan', self._plan, 10)
         self.create_subscription(TwistStamped, '/cmd_vel', self._cmd, 10)
 
     def _odom(self, m):
         p = m.pose.pose.position
         if self.last_xy is not None:
-            self.dist += math.dist((p.x, p.y), self.last_xy)
+            self.dist += math.hypot(p.x - self.last_xy[0], p.y - self.last_xy[1])
         self.last_xy = (p.x, p.y)
         self.xy = (p.x, p.y)
 
     def _plan(self, m):
         if self.xy is None or len(m.poses) < 2:
             return
-        # 로봇에서 경로를 따라 LOOK 만큼 간 지점의 방향
         acc, prev = 0.0, None
         target = None
         for ps in m.poses:
-            q = (ps.pose.position.x, ps.pose.position.y)
+            p = (ps.pose.position.x, ps.pose.position.y)
             if prev is not None:
-                acc += math.dist(q, prev)
+                acc += math.hypot(p[0] - prev[0], p[1] - prev[1])
                 if acc >= LOOK:
-                    target = q
+                    target = p
                     break
-            prev = q
+            prev = p
         if target is None:
-            target = (m.poses[-1].pose.position.x, m.poses[-1].pose.position.y)
+            return
+
         head = math.atan2(target[1] - self.xy[1], target[0] - self.xy[0])
-        self.plan_t.append(time.time())
+        now = time.time()
         if self.prev_head is not None:
-            d = math.degrees(abs(math.atan2(math.sin(head - self.prev_head),
-                                            math.cos(head - self.prev_head))))
-            self.turns.append(d)
+            d = math.atan2(math.sin(head - self.prev_head), math.cos(head - self.prev_head))
+            self.turns.append(abs(math.degrees(d)))
+            self.plan_t.append(now)
         self.prev_head = head
 
     def _cmd(self, m):
         w = m.twist.angular.z
-        self.wz.append((time.time(), w))
+        t = time.time()
+        self.wz.append((t, w))
         s = 1 if w > FLIP else (-1 if w < -FLIP else 0)
         if s != 0:
             if self.last_sign != 0 and s != self.last_sign:
@@ -89,33 +92,33 @@ def main():
 
     print()
     print('=' * 66)
-    print('%.0f 초 관측 / 실제 이동 거리 %.1f m (%.3f m/s)' % (el, n.dist, n.dist / el))
+    print('%.0f s observation / actual distance %.1f m (%.3f m/s)' % (el, n.dist, n.dist / el))
     print('=' * 66)
 
     if n.turns:
         t = sorted(n.turns)
-        big = sum(1 for x in n.turns if x > 60)
-        rev = sum(1 for x in n.turns if x > 120)
+        big = sum(1 for v in t if v > 60)
+        rev = sum(1 for v in t if v > 120)
         rate = len(n.plan_t) / el
-        print('(a) 전역 경로 초반 방향 (%.2f m 앞) 변화 — 재계획 %d회, %.2f Hz'
+        print('(a) Global path initial heading (%.2f m ahead) fluctuation -- replan count %d, %.2f Hz'
               % (LOOK, len(n.plan_t), rate))
-        print('    중앙값 %.1f도 / 90%% %.1f도 / 최대 %.1f도'
+        print('    median %.1f deg / 90%% %.1f deg / max %.1f deg'
               % (t[len(t) // 2], t[int(len(t) * 0.9)], t[-1]))
-        print('    60도 초과 %d회 (%.0f%%),  120도 초과(사실상 반전) %d회 (%.0f%%)'
+        print('    >60 deg %d (%.0f%%), >120 deg (reversal) %d (%.0f%%)'
               % (big, 100 * big / len(t), rev, 100 * rev / len(t)))
     else:
-        print('(a) /plan 을 충분히 못 받았습니다.')
+        print('(a) Insufficient /plan messages received.')
 
     print()
     if n.wz:
         turning = [w for _, w in n.wz if abs(w) > FLIP]
-        print('(b) 각속도 명령 진동 — 표본 %d개' % len(n.wz))
-        print('    |wz| > %.2f 인 구간 %d개 (%.0f%%), 부호 반전 %d회 (%.2f 회/초)'
+        print('(b) Angular velocity command oscillation -- samples: %d' % len(n.wz))
+        print('    |wz| > %.2f intervals: %d (%.0f%%), sign flips: %d (%.2f flips/s)'
               % (FLIP, len(turning), 100 * len(turning) / len(n.wz),
                  n.flips, n.flips / el))
     print()
-    print('해석: 경로 방향 변화가 크고 잦으면 (a) 경로 뒤집힘.')
-    print('      경로는 안정적인데 부호 반전만 잦으면 (b) 컨트롤러 진동.')
+    print('Interpretation: Large/frequent heading changes -> (a) Path flipping.')
+    print('                Stable path but frequent sign flips -> (b) Controller oscillation.')
     rclpy.shutdown()
     return 0
 

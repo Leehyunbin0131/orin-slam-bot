@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""배터리 상태 시뮬레이터 노드 (sensor_msgs/BatteryState).
+"""Battery state simulator node (sensor_msgs/BatteryState).
 
-시뮬레이션 환경에서 배터리 방전, 충전 및 Gazebo 참값 기준 도크 접촉 판정을 수행합니다.
+Simulates battery discharge, charging, and Gazebo ground truth dock contact evaluation.
 """
 
 import math
@@ -21,35 +21,28 @@ class BatterySim(Node):
 
         p('publish_rate', 1.0)
         p('capacity_ah', 10.0)          # 24 V 10 Ah = 240 Wh
-        p('voltage_full', 29.4)         # 7S 리튬이온 만충
-        p('voltage_empty', 21.0)        # 방전 하한
+        p('voltage_full', 29.4)         # 7S Li-ion fully charged
+        p('voltage_empty', 21.0)        # Discharge cutoff
         p('initial_soc', 0.85)
 
-        # 소비 전류 [A]
-        p('idle_current', 1.25)              # 컴퓨트 + 센서 (약 30 W)
-        p('current_per_mps', 3.0)            # 직진 속도에 비례
-        p('current_per_radps', 0.6)          # 회전 속도에 비례
-        p('charge_current', 3.0)             # 충전 (약 3.3 시간)
-        # 만충 근처에서 전류를 줄입니다. 이걸 두지 않으면 100% 에
-        # 도달한 뒤에도 전류가 그대로라 SimpleChargingDock 이
-        # 계속 "충전 중" 으로 보고, auto_dock 이 출발 시점을
-        # 판단하지 못합니다.
-        p('taper_from_soc', 0.95)
+        # Current draw parameters [A]
+        p('idle_current', 1.25)              # Compute + Sensors (~30 W)
+        p('current_per_mps', 3.0)            # Linear velocity proportional current
+        p('current_per_radps', 0.6)          # Angular velocity proportional current
+        p('charge_current', 3.0)             # Charge current (~3.3 hours)
+        p('taper_from_soc', 0.95)            # Current taper start SOC
 
-        # 시간 배속. 실제 방전은 몇 시간이 걸려 시뮬레이션 검증에
-        # 쓸 수 없습니다. 1.0 이 물리적으로 정직한 값이고, 도킹
-        # 시나리오를 돌릴 때만 올려 씁니다 (tools/dock_test.py).
+        # Simulation speedup factor
         p('speedup', 1.0)
 
-        # 도크 위치 — docking.yaml 의 home_dock.pose 와 같아야 합니다
+        # Target dock pose (must match home_dock.pose in docking.yaml)
         p('dock_x', 1.0)
         p('dock_y', -3.60)
         p('dock_yaw', -1.5708)
-        # 접촉 허용치 (위 설명의 유도 결과)
-        p('contact_tolerance_lon', 0.048)     # (동판 길이 100 - 핀 3.5)/2
-        p('contact_tolerance_lat', 0.034)     # (동판 폭 75 - 핀 6.1)/2
-        p('contact_tolerance_yaw', 0.11)      # 6.3도
-        # Gazebo 지상 진실. URDF 의 OdometryPublisher + gz_bridge.yaml.
+        # Contact tolerances
+        p('contact_tolerance_lon', 0.048)     # Longitudinal tolerance [m]
+        p('contact_tolerance_lat', 0.034)     # Lateral tolerance [m]
+        p('contact_tolerance_yaw', 0.11)      # Yaw tolerance [rad] (~6.3 deg)
         p('ground_truth_topic', '/ground_truth/odom')
         p('base_frame', 'base_footprint')
 
@@ -76,15 +69,13 @@ class BatterySim(Node):
         self.create_subscription(Odometry, '/odometry/filtered', self._odom, 10)
         self.create_subscription(Odometry, g('ground_truth_topic'),
                                  self._truth, 10)
-        # 시험용 주입구. 방전을 몇 시간 기다리지 않고 원하는 잔량에서
-        # 시나리오를 시작할 수 있게 합니다.
         self.create_subscription(Float32, '~/set_soc', self._set_soc, 1)
         self.pub = self.create_publisher(BatteryState, '/battery_state', 10)
 
         self.create_timer(1.0 / g('publish_rate'), self._tick)
         self.get_logger().info(
-            '배터리 시뮬레이터 시작: %.0f%% / %.1f Ah / 배속 %.0fx / '
-            '도크 (%.2f, %.2f) / 접촉 허용 세로 %.0fmm 가로 %.0fmm 각도 %.1f도'
+            'Battery simulator started: %.0f%% / %.1f Ah / speedup %.0fx / '
+            'dock (%.2f, %.2f) / tolerance lon %.0fmm lat %.0fmm yaw %.1f deg'
             % (self.soc * 100, self.cap_ah, self.speedup, self.dock[0],
                self.dock[1], self.tol_lon * 1000, self.tol_lat * 1000,
                math.degrees(self.tol_yaw)))
@@ -95,7 +86,7 @@ class BatterySim(Node):
 
     def _set_soc(self, m):
         self.soc = max(0.0, min(1.0, float(m.data)))
-        self.get_logger().warning('잔량을 %.0f%% 로 강제 설정' % (self.soc * 100))
+        self.get_logger().warning('Forced battery SOC to %.0f%%' % (self.soc * 100))
 
     def _truth(self, msg):
         p, q = msg.pose.pose.position, msg.pose.pose.orientation
@@ -108,14 +99,10 @@ class BatterySim(Node):
             if not self.warned_no_truth:
                 self.warned_no_truth = True
                 self.get_logger().warning(
-                    '지상 진실 자세(%s)를 못 받고 있습니다 — 충전 판정이 '
-                    '안 됩니다. URDF 의 OdometryPublisher 플러그인과 '
-                    'gz_bridge.yaml 항목을 확인하세요.'
+                    'Ground truth pose (%s) unavailable -- cannot evaluate docking contact.'
                     % self.get_parameter('ground_truth_topic').value)
             return False
         x, y, yaw = self.truth
-        # 도크 좌표계로 옮겨 세로/가로를 분리합니다. 둘의 허용치가 다릅니다
-        # (세로는 접점 깊이, 가로는 +/- 동판 단락 한계).
         dx, dy = x - self.dock[0], y - self.dock[1]
         c, s = math.cos(self.dock[2]), math.sin(self.dock[2])
         lon = dx * c + dy * s
@@ -132,44 +119,44 @@ class BatterySim(Node):
             return
         dt = (now - self.last).nanoseconds * 1e-9
         self.last = now
-        # 시뮬레이터가 되감기면(재기동) 음수가 나올 수 있습니다
-        if dt <= 0.0 or dt > 5.0:
-            return
 
+        dt_sim = dt * self.speedup
         docked = self._on_dock()
-        if docked:
-            # 만충에 가까워지면 전류를 줄입니다 (CV 구간 흉내)
-            k = 1.0
-            if self.soc > self.taper:
-                k = max(0.02, (1.0 - self.soc) / (1.0 - self.taper))
-            current = self.i_charge * k
-        else:
-            current = -(self.i_idle
-                        + self.i_mps * abs(self.v)
-                        + self.i_radps * abs(self.w))
 
-        # Ah 적산. current [A] * dt [s] / 3600 = Ah
-        self.soc += current * dt * self.speedup / 3600.0 / self.cap_ah
-        self.soc = max(0.0, min(1.0, self.soc))
+        if docked and self.soc < 1.0:
+            if self.soc >= self.taper:
+                frac = (1.0 - self.soc) / (1.0 - self.taper)
+                current = self.i_charge * max(0.1, frac)
+            else:
+                current = self.i_charge
+            delta_ah = (current * dt_sim) / 3600.0
+            self.soc = min(1.0, self.soc + delta_ah / self.cap_ah)
+            is_charging = True
+        else:
+            current = self.i_idle + abs(self.v) * self.i_mps + abs(self.w) * self.i_radps
+            delta_ah = (current * dt_sim) / 3600.0
+            self.soc = max(0.0, self.soc - delta_ah / self.cap_ah)
+            is_charging = False
 
         m = BatteryState()
         m.header.stamp = now.to_msg()
         m.header.frame_id = self.base_frame
-        m.voltage = self.v_empty + (self.v_full - self.v_empty) * self.soc
-        m.temperature = 27.0
-        # ROS 규약: 방전이 음수, 충전이 양수입니다.
-        # SimpleChargingDock 은 current > charging_threshold 로 판정합니다.
-        m.current = float(current)
+        m.voltage = float(self.v_empty + (self.v_full - self.v_empty) * self.soc)
+        m.temperature = 25.0
+        m.current = float(current if is_charging else -current)
         m.charge = float(self.cap_ah * self.soc)
         m.capacity = float(self.cap_ah)
         m.design_capacity = float(self.cap_ah)
         m.percentage = float(self.soc)
-        if docked:
-            m.power_supply_status = (BatteryState.POWER_SUPPLY_STATUS_FULL
-                                     if self.soc >= 0.999
-                                     else BatteryState.POWER_SUPPLY_STATUS_CHARGING)
+
+        if is_charging:
+            m.power_supply_status = (
+                BatteryState.POWER_SUPPLY_STATUS_FULL
+                if self.soc >= 0.999
+                else BatteryState.POWER_SUPPLY_STATUS_CHARGING)
         else:
             m.power_supply_status = BatteryState.POWER_SUPPLY_STATUS_DISCHARGING
+
         m.power_supply_health = BatteryState.POWER_SUPPLY_HEALTH_GOOD
         m.power_supply_technology = BatteryState.POWER_SUPPLY_TECHNOLOGY_LION
         m.present = True

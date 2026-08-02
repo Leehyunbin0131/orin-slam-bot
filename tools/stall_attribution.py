@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""로봇 정체/비정상 정지 구간 원인 분석 스크립트.
+"""Robot stall and abnormal stop cause attribution script.
 
-    python3 tools/stall_attribution.py [측정초] [반경m] [시간s]
+    python3 tools/stall_attribution.py [duration_s] [radius_m] [window_s]
 
-정체 원인 분류: 탐사 노드 대기, 전역 플래너 경로 부재, MPPI 제어기 출력 정지, BT 복구 동작 수행, 기구학/물리적 끼임.
+Stall cause classification: No goal, BT recovery, No plan, Controller silent, Controller zero, Command blocked, Creeping.
 """
 
 import math
@@ -24,7 +24,7 @@ TL = QoSProfile(reliability=ReliabilityPolicy.RELIABLE,
                 durability=DurabilityPolicy.TRANSIENT_LOCAL, depth=1)
 
 CMD_EPS_V, CMD_EPS_W = 0.005, 0.01
-SILENT = 0.5            # 이 시간 이상 새 명령이 없으면 "침묵"
+SILENT = 0.5
 STALE_PLAN = 2.0
 
 RECOVERY_NODES = ('BackUp', 'Spin', 'Wait', 'ClearEntireCostmap',
@@ -32,13 +32,13 @@ RECOVERY_NODES = ('BackUp', 'Spin', 'Wait', 'ClearEntireCostmap',
                   'ClearingActions')
 
 CAUSES = [
-    ('NO_GOAL', '목표 없음 (탐사 노드가 목표를 안 보냄)'),
-    ('BT_RECOVERY', '복구 동작 중 (BackUp/Spin/Wait/코스트맵 지우기)'),
-    ('NO_PLAN', '경로 없음 (planner 실패 또는 경로가 낡음)'),
-    ('CTRL_SILENT', '컨트롤러 침묵 (명령이 아예 안 나옴)'),
-    ('CTRL_ZERO', '컨트롤러가 0 을 냄 (유효 궤적을 못 찾음)'),
-    ('CMD_BLOCKED', '명령이 중간에 막힘 (smoother/twist_mux 단계)'),
-    ('CREEPING', '명령은 나가는데 구역을 못 벗어남 (헛돌기/끼임)'),
+    ('NO_GOAL', 'No goal (explorer node has not issued a goal)'),
+    ('BT_RECOVERY', 'BT recovery active (BackUp/Spin/Wait/Clear costmap)'),
+    ('NO_PLAN', 'No plan (planner failure or stale path)'),
+    ('CTRL_SILENT', 'Controller silent (no velocity commands output)'),
+    ('CTRL_ZERO', 'Controller zero output (failed to find valid trajectory)'),
+    ('CMD_BLOCKED', 'Command blocked (smoother/twist_mux pipeline)'),
+    ('CREEPING', 'Command active but robot confined (slipping/stuck)'),
 ]
 
 
@@ -46,167 +46,178 @@ class Attrib(Node):
 
     def __init__(self, radius, window):
         super().__init__('stall_attribution')
-        self.R, self.W = radius, window
-        self.xy = None
-        self.hist = deque()                 # (t, x, y)
-        self.goal_active = False
-        self.bt_running = ''
-        self.t_plan = 0.0
-        self.plan_len = 0
-        self.t_nav = self.t_out = 0.0
-        self.nav = self.out = (0.0, 0.0)
+        self.set_parameters([rclpy.parameter.Parameter('use_sim_time', value=True)])
+        self.R = radius
+        self.W = window
 
-        self.create_subscription(Odometry, '/ground_truth/odom', self._odom, 10)
-        self.create_subscription(GoalStatusArray,
-                                 '/navigate_to_pose/_action/status', self._st, 10)
-        self.create_subscription(BehaviorTreeLog, '/behavior_tree_log', self._bt, 10)
-        self.create_subscription(Path, '/plan', self._plan, 10)
-        self.create_subscription(TwistStamped, '/cmd_vel_nav', self._cnav, 10)
+        self.xy = None
+        self.hist = deque()
+
+        self.goal_active = False
+        self.create_subscription(
+            GoalStatusArray, '/navigate_to_pose/_action/status', self._nav_status, 10)
+
+        self.bt_active = set()
+        self.create_subscription(
+            BehaviorTreeLog, '/behavior_tree_log', self._bt_log, 10)
+
+        self.last_plan_t = None
+        self.create_subscription(Path, '/plan', lambda _m: setattr(self, 'last_plan_t', time.time()), 10)
+
+        self.last_cin_t = None
+        self.last_cin_v = 0.0
+        self.last_cin_w = 0.0
+        self.create_subscription(TwistStamped, '/cmd_vel_nav', self._cin, 10)
+
+        self.last_cout_t = None
+        self.last_cout_v = 0.0
+        self.last_cout_w = 0.0
         self.create_subscription(TwistStamped, '/cmd_vel', self._cout, 10)
-        # "몇 분 기다리면 결국 통과한다" 를 설명하려면 주변 코스트맵이
-        # 시간이 지나며 열리는지 봐야 합니다 (STVL voxel_decay 10초,
-        # BT 의 ClearEntireCostmap, SLAM 보정 등).
+
         self.lc = None
         self.create_subscription(OccupancyGrid, '/local_costmap/costmap',
                                  lambda m: setattr(self, 'lc', m), TL)
 
-        self.tally = defaultdict(float)     # 전체 원인별 초
-        self.episodes = []                  # dict(center, dur, causes)
+        self.tally = defaultdict(float)
+        self.episodes = []
         self.cur = None
         self.free_time = 0.0
-        self.last = time.time()
-        self.create_timer(0.1, self._tick)
+
+        self.create_subscription(Odometry, '/odometry/filtered', self._odom, 10)
 
     def _odom(self, m):
         p = m.pose.pose.position
         self.xy = (p.x, p.y)
 
-    def _st(self, m):
-        self.goal_active = any(s.status == GoalStatus.STATUS_EXECUTING
-                               for s in m.status_list)
+    def _nav_status(self, m):
+        self.goal_active = any(s.status == GoalStatus.STATUS_EXECUTING for s in m.status_list)
 
-    def _bt(self, m):
+    def _bt_log(self, m):
         for e in m.event_log:
-            if e.current_status == 'RUNNING':
-                self.bt_running = e.node_name
+            if any(k in e.node_name for k in RECOVERY_NODES):
+                if e.previous_status != 'IDLE' and e.current_status == 'IDLE':
+                    self.bt_active.discard(e.node_name)
+                elif e.current_status == 'RUNNING':
+                    self.bt_active.add(e.node_name)
+                elif e.current_status in ('SUCCESS', 'FAILURE'):
+                    self.bt_active.discard(e.node_name)
 
-    def _plan(self, m):
-        self.t_plan, self.plan_len = time.time(), len(m.poses)
-
-    def _cnav(self, m):
-        self.t_nav = time.time()
-        self.nav = (m.twist.linear.x, m.twist.angular.z)
+    def _cin(self, m):
+        self.last_cin_t = time.time()
+        self.last_cin_v = m.twist.linear.x
+        self.last_cin_w = m.twist.angular.z
 
     def _cout(self, m):
-        self.t_out = time.time()
-        self.out = (m.twist.linear.x, m.twist.angular.z)
-
-    def _classify(self, now):
-        if not self.goal_active:
-            return 'NO_GOAL'
-        if any(k in self.bt_running for k in RECOVERY_NODES):
-            return 'BT_RECOVERY'
-        if now - self.t_plan > STALE_PLAN or self.plan_len == 0:
-            return 'NO_PLAN'
-        if now - self.t_nav > SILENT:
-            return 'CTRL_SILENT'
-        if abs(self.nav[0]) < CMD_EPS_V and abs(self.nav[1]) < CMD_EPS_W:
-            return 'CTRL_ZERO'
-        if (now - self.t_out > SILENT
-                or (abs(self.out[0]) < CMD_EPS_V and abs(self.out[1]) < CMD_EPS_W)):
-            return 'CMD_BLOCKED'
-        return 'CREEPING'
+        self.last_cout_t = time.time()
+        self.last_cout_v = m.twist.linear.x
+        self.last_cout_w = m.twist.angular.z
 
     def _free_frac(self):
-        """반경 1 m 안에서 로봇 중심이 놓일 수 있는 셀 비율.
-
-        `/local_costmap/costmap` 은 0~100 척도입니다 (99=내접, 100=치명).
-        이 값이 갇힘 구간 동안 올라가면 "기다리니 길이 열린" 것입니다.
-        """
         if self.lc is None or self.xy is None:
             return float('nan')
-        i = self.lc.info
-        a = np.array(self.lc.data, dtype=np.int16).reshape(i.height, i.width)
-        r = int((self.xy[1] - i.origin.position.y) / i.resolution)
-        c = int((self.xy[0] - i.origin.position.x) / i.resolution)
-        n = int(1.0 / i.resolution)
-        sub = a[max(0, r - n):min(a.shape[0], r + n),
-                max(0, c - n):min(a.shape[1], c + n)]
-        if sub.size == 0:
+        info = self.lc.info
+        res = info.resolution
+        grid = np.asarray(self.lc.data, dtype=np.int16).reshape(info.height, info.width)
+        cx = int((self.xy[0] - info.origin.position.x) / res)
+        cy = int((self.xy[1] - info.origin.position.y) / res)
+        r_cells = int(1.0 / res)
+        y0, y1 = max(0, cy - r_cells), min(info.height, cy + r_cells + 1)
+        x0, x1 = max(0, cx - r_cells), min(info.width, cx + r_cells + 1)
+        if y0 >= y1 or x0 >= x1:
             return float('nan')
-        return float(np.sum((sub >= 0) & (sub < 99)) / sub.size)
+        sub = grid[y0:y1, x0:x1]
+        valid = sub >= 0
+        if not valid.any():
+            return float('nan')
+        return float((sub[valid] < 99).sum() / valid.sum())
 
     def _confined(self, now):
-        """최근 W 초의 위치가 전부 반경 R 안이면 갇힘. (중심, True/False)"""
         while self.hist and now - self.hist[0][0] > self.W:
             self.hist.popleft()
         if not self.hist or now - self.hist[0][0] < self.W * 0.9:
-            return None, False          # 창이 아직 안 참
+            return None, False
         cx = sum(h[1] for h in self.hist) / len(self.hist)
         cy = sum(h[2] for h in self.hist) / len(self.hist)
         far = max(math.dist((cx, cy), (h[1], h[2])) for h in self.hist)
-        return (cx, cy), far < self.R
+        return (cx, cy), far <= self.R
 
-    def _tick(self):
-        now = time.time()
-        dt, self.last = now - self.last, now
+    def diagnose(self, now):
+        if not self.goal_active:
+            return 'NO_GOAL'
+        if self.bt_active:
+            return 'BT_RECOVERY'
+        if self.last_plan_t is None or now - self.last_plan_t > STALE_PLAN:
+            return 'NO_PLAN'
+        if self.last_cin_t is None or now - self.last_cin_t > SILENT:
+            return 'CTRL_SILENT'
+        cin_moving = abs(self.last_cin_v) > CMD_EPS_V or abs(self.last_cin_w) > CMD_EPS_W
+        if not cin_moving:
+            return 'CTRL_ZERO'
+        cout_moving = abs(self.last_cout_v) > CMD_EPS_V or abs(self.last_cout_w) > CMD_EPS_W
+        if not cout_moving:
+            return 'CMD_BLOCKED'
+        return 'CREEPING'
+
+    def tick(self, dt):
         if self.xy is None:
             return
+        now = time.time()
         self.hist.append((now, self.xy[0], self.xy[1]))
-        center, stuck = self._confined(now)
-        if not stuck:
+        center, confined = self._confined(now)
+        if not confined:
             self.free_time += dt
             if self.cur:
+                self.cur['ff1'] = self._free_frac()
                 self.episodes.append(self.cur)
                 self.cur = None
             return
-        cause = self._classify(now)
+
+        cause = self.diagnose(now)
         self.tally[cause] += dt
-        ff = self._free_frac()
         if self.cur is None:
-            self.cur = {'center': center, 'dur': 0.0,
-                        'causes': defaultdict(float), 'nodes': set(),
-                        'ff0': ff, 'ff1': ff}
-        self.cur['center'] = center
+            self.cur = {
+                'center': center, 't0': now, 'dur': 0.0,
+                'causes': defaultdict(float), 'nodes': set(),
+                'ff0': self._free_frac(), 'ff1': self._free_frac()
+            }
         self.cur['dur'] += dt
         self.cur['causes'][cause] += dt
-        self.cur['ff1'] = ff
-        if self.bt_running:
-            self.cur['nodes'].add(self.bt_running)
+        self.cur['nodes'].update(self.bt_active)
 
     def report(self):
         if self.cur:
+            self.cur['ff1'] = self._free_frac()
             self.episodes.append(self.cur)
+            self.cur = None
+
         stuck_t = sum(self.tally.values())
         total = stuck_t + self.free_time
         print()
         print('=' * 72)
-        print('갇힘 판정: 최근 %.0f 초의 위치가 모두 반경 %.2f m 안' % (self.W, self.R))
-        print('총 %.0f 초 중  정상 이동 %.0f 초 (%.0f%%) / 갇힘 %.0f 초 (%.0f%%)'
+        print('Confined threshold: recent %.0f s positions within radius %.2f m' % (self.W, self.R))
+        print('Total %.0f s: Normal motion %.0f s (%.0f%%) / Confined %.0f s (%.0f%%)'
               % (total, self.free_time, 100 * self.free_time / max(total, 1e-9),
                  stuck_t, 100 * stuck_t / max(total, 1e-9)))
         print('=' * 72)
         if stuck_t <= 0:
-            print('갇힌 구간이 없습니다.')
+            print('No confinement episodes detected.')
             return
-        print('%-13s %8s %7s   %s' % ('원인', '초', '갇힘중%', '설명'))
+        print('%-13s %8s %7s   %s' % ('Cause', 'Seconds', 'Stuck%', 'Description'))
         for key, desc in CAUSES:
             s = self.tally.get(key, 0.0)
             if s > 0:
                 print('%-13s %8.1f %6.0f%%   %s'
                       % (key, s, 100 * s / stuck_t, desc))
         print()
-        print('가장 오래 갇힌 구역 10곳')
-        print('  자유비율 = 반경 1 m 안에서 로봇 중심이 놓일 수 있는 셀 비율.')
-        print('  갇힘 중에 이 값이 올라갔다면 "기다리니 길이 열린" 것입니다.')
+        print('Top 10 longest confined regions')
         print('%8s  %-18s %-13s %-13s %s'
-              % ('길이', '구역 중심', '주원인', '자유비율 처음->끝', 'BT 노드'))
+              % ('Duration', 'Center', 'Main Cause', 'Free Frac Start->End', 'BT Nodes'))
         for e in sorted(self.episodes, key=lambda x: -x['dur'])[:10]:
             if e['dur'] < 2.0:
                 continue
             top = max(e['causes'].items(), key=lambda kv: kv[1])
             nodes = ','.join(sorted(n for n in e['nodes'] if n))[:28]
-            print('%6.1f 초  (%6.2f, %6.2f)   %-13s %.2f -> %.2f     %s'
+            print('%6.1f s  (%6.2f, %6.2f)   %-13s %.2f -> %.2f     %s'
                   % (e['dur'], e['center'][0], e['center'][1], top[0],
                      e['ff0'], e['ff1'], nodes or '-'))
 
@@ -218,9 +229,14 @@ def main():
     rclpy.init()
     n = Attrib(radius, window)
     t0 = time.time()
+    last = t0
     try:
         while time.time() - t0 < dur:
-            rclpy.spin_once(n, timeout_sec=0.1)
+            time.sleep(0.1)
+            now = time.time()
+            n.tick(now - last)
+            last = now
+            rclpy.spin_once(n, timeout_sec=0.0)
     except KeyboardInterrupt:
         pass
     n.report()

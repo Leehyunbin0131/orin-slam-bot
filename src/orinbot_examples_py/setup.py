@@ -14,7 +14,7 @@ setup(
     zip_safe=True,
     maintainer='hyunlee',
     maintainer_email='unit60888@gmail.com',
-    description='orinbot 용 rclpy 예제 노드',
+    description='rclpy example nodes for orinbot',
     license='Apache-2.0',
     entry_points={
         'console_scripts': [

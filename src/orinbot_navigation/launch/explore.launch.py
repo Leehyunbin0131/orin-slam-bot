@@ -1,4 +1,4 @@
-"""프론티어 자동 탐사 노드 단독 런치 파일.
+"""Standalone launch file for autonomous frontier exploration node.
 
     ros2 launch orinbot_navigation explore.launch.py
 """
@@ -13,13 +13,13 @@ def generate_launch_description():
     args = [
         DeclareLaunchArgument(
             'return_home', default_value='true',
-            description='탐사가 끝나면 출발점으로 복귀'),
+            description='Return to home pose after exploration completes'),
         DeclareLaunchArgument(
             'explore_timeout', default_value='0.0',
-            description='전체 제한 시간 [s]. 0 이면 무제한'),
+            description='Overall timeout [s] (0 for unlimited)'),
         DeclareLaunchArgument(
             'gain', default_value='1.5',
-            description='클수록 "멀어도 큰 미탐색 구역"을 선호합니다'),
+            description='Unexplored area gain weight'),
         DeclareLaunchArgument(
             'use_sim_time', default_value='true'),
     ]

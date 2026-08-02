@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""통로 폭별 전역 경로 생성(Path Generation) 및 목표 도달 검증 스크립트.
+"""Global path generation and goal reachability verification script per corridor width.
 
     python3 tools/corridor_plan.py
 """
@@ -12,14 +12,14 @@ from nav2_msgs.action import ComputePathToPose
 from rclpy.action import ActionClient
 from rclpy.node import Node
 
-# (이름, 통로 중심 y, 설계 폭)
+# (Name, Corridor center y, Designed width)
 CORRIDORS = [
     ('c090', 2.6, 0.90),
     ('c070', 0.6, 0.70),
     ('c055', -1.6, 0.55),
     ('c060', -3.0, 0.60),
 ]
-X0, X1 = 2.4, 4.2                      # 벽(x=3.2) 양쪽
+X0, X1 = 2.4, 4.2                      # Both sides of wall (x=3.2)
 
 
 def pose(x, y):
@@ -37,11 +37,11 @@ def main():
     n.set_parameters([rclpy.parameter.Parameter('use_sim_time', value=True)])
     ac = ActionClient(n, ComputePathToPose, 'compute_path_to_pose')
     if not ac.wait_for_server(timeout_sec=30):
-        print('compute_path_to_pose 서버 없음')
+        print('compute_path_to_pose action server unavailable')
         return 1
 
     print('%-6s %5s  %-9s %8s %9s  %s'
-          % ('통로', '폭', '결과', '경로길이', '끝점오차', '판정'))
+          % ('Corridor', 'Width', 'Result', 'Length', 'EndGap', 'Verdict'))
     for name, y, w in CORRIDORS:
         g = ComputePathToPose.Goal()
         g.start = pose(X0, y)
@@ -51,31 +51,30 @@ def main():
         rclpy.spin_until_future_complete(n, fut, timeout_sec=20)
         gh = fut.result()
         if gh is None or not gh.accepted:
-            print('%-6s %5.2f  %-9s' % (name, w, '거절됨'))
+            print('%-6s %5.2f  %-9s' % (name, w, 'Rejected'))
             continue
         rf = gh.get_result_async()
         rclpy.spin_until_future_complete(n, rf, timeout_sec=30)
         res = rf.result()
         if res is None:
-            print('%-6s %5.2f  %-9s' % (name, w, '시간초과'))
+            print('%-6s %5.2f  %-9s' % (name, w, 'Timeout'))
             continue
         r = res.result
         pts = [(p.pose.position.x, p.pose.position.y) for p in r.path.poses]
         if not pts:
             print('%-6s %5.2f  %-9s %8s %9s  %s'
-                  % (name, w, '경로없음', '-', '-', '차단됨'))
+                  % (name, w, 'NoPath', '-', '-', 'Blocked'))
             continue
         length = sum(math.dist(pts[i], pts[i + 1]) for i in range(len(pts) - 1))
         gap = math.dist(pts[-1], (X1, y))
-        # 직선 거리 1.8 m. 통로를 지나면 1.8~2.2 m, 우회하면 훨씬 길다.
         if gap > 0.3:
-            verdict = '목표 미도달(잘림)'
+            verdict = 'GoalNotReached(Truncated)'
         elif length < 2.5:
-            verdict = '통로 통과'
+            verdict = 'Traversed'
         else:
-            verdict = '우회 (%.1f 배)' % (length / (X1 - X0))
+            verdict = 'Detour(%.1fx)' % (length / (X1 - X0))
         print('%-6s %5.2f  %-9s %8.2f %9.2f  %s'
-              % (name, w, '성공', length, gap, verdict))
+              % (name, w, 'Success', length, gap, verdict))
 
     rclpy.shutdown()
     return 0
