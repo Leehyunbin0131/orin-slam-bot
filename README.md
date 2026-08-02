@@ -1,7 +1,8 @@
 # orinbot — ROS 2 Jazzy + Gazebo Harmonic 시뮬레이션 워크스페이스
 
-실물 로봇 없이 시뮬레이션 환경에서 개발하기 위한 워크스페이스입니다.
-실물 로봇 이전을 염두에 두고, 시뮬레이션과 실기 환경이 **동일한 인터페이스**를 갖도록 구성했습니다.
+실물 로봇 없이 시뮬레이션에서 개발하되, 실기 이전을 전제로 시뮬레이션과 실기가 **동일한 인터페이스**를 갖도록 구성한 워크스페이스입니다.
+
+배포 타깃은 **Jetson Orin Nano Super**(6코어 A78AE + 8GB 통합 메모리)이며, 2026-08-02 에 이 보드에서 자원 사용량을 직접 실측했습니다 — 아래 "실물 기기 자원 실측" 절을 참고하세요.
 
 ## 로봇 사양
 
@@ -91,6 +92,9 @@ ros2 launch orinbot_bringup sim.launch.py
 | `use_rviz` | `true` | RViz2 동시 실행 여부 |
 | `gui` | `true` | `false` 설정 시 Gazebo GUI 없이 그래픽리스(Headless) 실행 |
 | `use_pointcloud` | `true` | `depth_image_proc`를 사용한 포인트 클라우드 생성 여부 |
+| `clock_rate` | `100.0` | `/clock` 발행 주기 [Hz]. `0` 이면 Gazebo 원본(약 1000 Hz)을 그대로 통과 |
+
+> `clock_rate` 는 시뮬레이션 정확도와 무관합니다. 물리 스텝(`max_step_size` 1 ms)은 그대로 두고 **ROS 로 나가는 시계만** 솎습니다. `use_sim_time: true` 인 rclpy 노드는 `/clock` 메시지마다 파이썬 콜백을 돌기 때문에 비용이 발행 주기에 그대로 비례하며, Orin 실측으로 100 Hz 에서도 **노드 1개당 11.3 %p** 입니다. 1000 Hz 로 두면 rclpy 노드 몇 개만으로 보드가 마비됩니다. 실기에는 `/clock` 자체가 없으므로 이 비용은 순수한 시뮬레이션 인공물입니다.
 
 ### URDF 모델만 확인 (Gazebo 미사용)
 
@@ -131,6 +135,17 @@ ros2 run orinbot_examples_cpp depth_safety_filter --ros-args -p use_sim_time:=tr
 | `/camera/depth/points` | `sensor_msgs/PointCloud2` | 출력 | STVL 3D 장애물 관측원 데이터 |
 | `/camera/imu` | `sensor_msgs/Imu` | 출력 | IMU 데이터 (자이로만 사용) |
 | `/map` | `nav_msgs/OccupancyGrid` | 출력 | RTAB-Map 점유 격자 지도 (QoS: TRANSIENT_LOCAL) |
+| `/battery_state` | `sensor_msgs/BatteryState` | 출력 | 잔량·전압·전류. 시뮬은 `battery_sim.py`, 실기는 BMS 드라이버 |
+| `/detected_dock_pose` | `geometry_msgs/PoseStamped` | 출력 | 카메라가 본 도크 자세 (`dock_marker_board.py`, 마커 3장 보드) |
+| `/cmd_vel_dock` | `geometry_msgs/TwistStamped` | 내부 | 도킹 속도 명령. `twist_mux` 우선순위 50 |
+| `/exploration_enabled` | `std_msgs/Bool` | 입력 | 탐사 일시정지 스위치. `auto_dock` 이 도킹 중에 `false` 를 보냅니다 |
+| `/ground_truth/odom` | `nav_msgs/Odometry` | 출력 | **시뮬레이션 전용.** Gazebo 가 아는 실제 자세. 자율주행 스택은 구독하지 않습니다 |
+
+| 액션 | 타입 | 비고 |
+|---|---|---|
+| `/navigate_to_pose` | `nav2_msgs/NavigateToPose` | 일반 주행 |
+| `/dock_robot` | `nav2_msgs/DockRobot` | 충전 도크 접안 (`dock_id: home_dock`) |
+| `/undock_robot` | `nav2_msgs/UndockRobot` | 도크에서 후진 이탈 |
 
 `/map` 토픽을 구독하는 노드나 도구는 QoS 설정을 **RELIABLE + TRANSIENT_LOCAL**로 맞춰야 합니다.
 RTAB-Map은 지도가 업데이트될 때만 토픽을 발행하므로, 기본 QoS(VOLATILE)로 접속하면 로봇이 정지해 있는 동안 마지막 지도를 수신하지 못하고 영구 대기 상태에 빠집니다.
@@ -204,6 +219,40 @@ ros2 launch orinbot_navigation navigation.launch.py use_sim:=false
 ros2 launch orinbot_navigation explore.launch.py
 ```
 
+**충전 도킹**
+
+도킹은 기본으로 켜져 있습니다. 로봇은 잔량이 떨어지면 스스로 도크로 복귀하고, 충전이 끝나면 다시 나갑니다.
+
+접근 방식은 `docking_mode` 로 고릅니다 — 기본 `staged`(단계 분리, 정밀), `smooth`(Nav2 순정 곡선 접근, 빠름).
+
+```bash
+# 손으로 도킹/언도킹 시키기
+ros2 action send_goal /dock_robot nav2_msgs/action/DockRobot \
+  "{use_dock_id: true, dock_id: home_dock}"
+ros2 action send_goal /undock_robot nav2_msgs/action/UndockRobot "{}"
+
+# 잔량을 직접 낮춰 자동 복귀를 즉시 시험 (몇 시간 기다리지 않아도 됩니다)
+ros2 topic pub --once /battery_sim/set_soc std_msgs/msg/Float32 '{data: 0.1}'
+
+# 방전/충전을 60배속으로 돌려 전체 순환을 몇 분 안에 관찰
+ros2 launch orinbot_navigation navigation.launch.py battery_speedup:=60 initial_soc:=0.3
+
+# 도킹 기능 없이 (실기에서 도크를 안 쓸 때 / 자원을 아낄 때)
+ros2 launch orinbot_navigation navigation.launch.py dock:=false
+
+# 이미 실행 중인 스택에 도킹만 추가하거나, 도킹만 재기동
+ros2 launch orinbot_navigation docking.launch.py
+```
+
+충전이 시작되면 **인지·항법을 재웁니다** (`power_save`, 기본 켜짐). Nav2 5개 서버는 lifecycle PAUSE 로, RTAB-Map 은 `/rtabmap/pause` 로 멈춥니다 — 죽이지 않으므로 포즈 그래프가 램에 남아 재위치추정 없이 즉시 복귀합니다. 복귀는 SLAM → Nav2 RESUME → 전역 코스트맵 확인 순서로만 진행되며, 확인 전에는 로봇을 움직이지 않습니다.
+
+```bash
+# 절전 없이 (디버깅용)
+ros2 launch orinbot_navigation navigation.launch.py auto_dock:=false
+```
+
+동작 원리와 실측치는 아래 "충전 도킹" 절을 참고하세요.
+
 **Nav2 파라미터만 수정했을 때 빠르게 재기동하는 방법**
 
 전체 스택을 재시작(3분 이상 소요)하는 대신 Nav2 프로세스만 단독 재기동(약 45초 소요)합니다. 시뮬레이터와 SLAM은 유지한 채 Nav2 노드만 종료 후 재실행합니다.
@@ -212,19 +261,41 @@ ros2 launch orinbot_navigation explore.launch.py
 ros2 launch orinbot_navigation nav2.launch.py
 ```
 
-### 실물 기기(Jetson Orin Nano) 리소스 절감 방법
+### 실물 기기(Jetson Orin Nano Super) 자원 실측
 
-시스템 리소스가 부족할 때 아래 순서대로 적용할 수 있습니다. (단, 두 옵션 모두 정확도 측면에서 트레이드오프가 존재합니다.)
+**2026-08-02 실기에서 직접 쟀습니다. 결론부터 — 자원은 부족하지 않습니다.**
+
+| | 실측 |
+|---|---|
+| 유휴 | **2.8 / 6 코어** |
+| 주행 중 (MPPI 가동) | **3.1 / 6 코어** |
+| 메모리 최대 | **2.76 / 7.85 GB** |
+| 최고 온도 | 60.1도 (`MAXN_SUPER`) |
+
+- **병목은 CPU 이고 메모리가 아닙니다** (CPU 51% 대 메모리 35%). 자원을 더 쓰는 선택은 메모리로는 감당되지만 CPU 에서 막힙니다.
+- **주행 시작 시 늘어나는 32 %p 는 거의 전부 `controller_server`(+18.8)와 `bt_navigator`(+8.9)** 입니다.
+- `rgbd_odometry` + `rtabmap` 만으로 1.07 코어입니다. 절감을 논한다면 여기가 먼저입니다.
+- **기본 이미지에는 스왑도 zram 도 없습니다.** rtabmap 이 튀면 곧바로 OOM 이므로 스왑파일을 두세요 (안전망 용도이므로 `vm.swappiness` 는 낮게).
+
+아래 두 옵션은 **지금은 켤 이유가 없습니다.** 여유가 있는 상태에서 정확도만 버리는 거래이기 때문입니다. 실기에서 무언가를 더 얹어 CPU 가 막혔을 때만 꺼내세요.
 
 ```bash
-# rtabmap CPU -38%, 메모리 -106MB 절감 / 위치 자세 오차 21mm -> 27mm 증가
+# rtabmap CPU -38%, 메모리 -106MB / 위치 오차 중앙값 21 -> 27 mm 증가
 ros2 launch orinbot_navigation navigation.launch.py detection_rate:=1.0
 
-# 시각 오도메트리를 비활성화하고 EKF(휠+IMU)만 사용 (자원 절감 효과가 가장 크지만 위치 정확도 손실이 큼)
+# 시각 오도메트리를 끄고 EKF(휠+IMU)만 사용. 절감은 가장 크지만 위치 정확도 손실도 가장 큼
 ros2 launch orinbot_navigation navigation.launch.py use_vslam:=false
 ```
 
-실물 기기 환경에서는 RViz를 직접 실행하지 말고 개발용 PC에서 원격 접속하여 확인하는 것이 좋습니다. 이때는 **양쪽 PC 모두** 환경변수를 `ROS_AUTOMATIC_DISCOVERY_RANGE=SUBNET`으로 변경해야 합니다. (`LOCALHOST` 설정 시 타 PC와의 통신이 불가능합니다.)
+**먼저 손대야 할 곳은 도킹 노드입니다** — `staged_dock` 과 `dock_marker_board` 가 도크 근처가 아닐 때도 **0.62 코어**를 씁니다 (`dock_marker_board` 는 15 Hz 로 ArUco 검출을 계속 돌립니다). 정확도를 하나도 버리지 않고 회수할 수 있는 유일한 항목이며, `~/pause` 서비스가 이미 있으므로 호출만 붙이면 됩니다. 도크를 아예 안 쓴다면 `dock:=false`.
+
+노드별 실측표, 측정 방법, 이미 시도했다가 기각된 파라미터 변경 목록은 `.claude/skills/orin-resource-budget/SKILL.md` 에 있습니다. **파라미터로 자원을 아끼려 하기 전에 그 문서를 먼저 보세요.**
+
+#### RViz 를 어디서 띄울 것인가
+
+원격(개발 PC)에서 띄우려면 **양쪽 모두** `ROS_AUTOMATIC_DISCOVERY_RANGE=SUBNET` 이어야 합니다 (`LOCALHOST` 면 서로 안 보입니다). 이 방식은 **네트워크가 멀티캐스트를 통과시켜야** 성립합니다 — 일부 공유기는 IGMP 스누핑으로 멀티캐스트를 버려서 유니캐스트는 되는데 ROS 2 탐색만 안 되는 상태가 됩니다. `ros2 multicast send` / `ros2 multicast receive` 로 먼저 확인하고, 막혀 있으면 두 기기를 언매니지드 스위치로 묶으세요.
+
+로봇에 모니터를 달아 실기에서 직접 띄운다면 **`navigation.rviz` 를 그대로 쓰지 마세요.** `StvlVoxels`/`Map3D` 포인트클라우드와 `ColorImage` 가 비용의 대부분이고, 상태 확인에는 필요하지 않습니다. `Map` + `LocalCostmap` + `RobotModel` + `Scan` + `Path` 만 남긴 2D 뷰로 별도 설정을 만들고, 같이 `publish_voxel_map: false` (`nav2_params.yaml`) 로 두세요 — 이건 보는 쪽뿐 아니라 **발행하는 `controller_server` 쪽 부하도 같이 줄입니다.**
 
 ### 주요 실행 인자
 
@@ -239,6 +310,12 @@ ros2 launch orinbot_navigation navigation.launch.py use_vslam:=false
 | `memory_thr` | `300` | 작업 메모리의 노드 개수 상한 (0=무제한, 메모리가 지속 증가) |
 | `map_3d` | `false` | 3D 점유 격자 생성 여부 (`true` 설정 시 메모리 사용량 2.7배) |
 | `reg_strategy` | `2` | 루프 클로저 검증 방식 (0=영상 단독, 2=영상+ICP 융합) |
+| `dock` | `true` | 충전 도킹 일체(마커 검출 + docking_server + 배터리) 실행 여부 |
+| `docking_mode` | `staged` | `staged`=단계 분리(정밀), `smooth`=Nav2 순정 곡선 접근(빠름). 액션 규격은 동일 |
+| `auto_dock` | `true` | 잔량이 떨어지면 자동 복귀. `false` 면 사람이 `/dock_robot` 을 직접 호출 |
+| `clock_rate` | `100.0` | `/clock` 발행 주기 [Hz]. `0` 이면 Gazebo 원본을 그대로 통과 (위 설명 참고) |
+| `battery_speedup` | `1.0` | 방전/충전 시간 배속. 시나리오 검증 시 `60` 정도로 올려 씁니다 |
+| `initial_soc` | `0.85` | 시작 잔량 (0~1) |
 
 전체 인자 목록은 `ros2 launch orinbot_navigation navigation.launch.py --show-args` 명령으로 확인할 수 있습니다.
 
@@ -263,9 +340,10 @@ URDF 모델이나 월드 파일을 수정한 후에는 반드시 위 정리 작�
 ### 시스템 구성
 
 ```
-map --(rtabmap)--> vodom --(rgbd_odometry + vodom_tf_relay)--> odom
-                                            --(diff_drive_controller)--> base_footprint
+map --(rtabmap)--> vodom --(rgbd_odometry + vodom_tf_relay)--> odom --(EKF)--> base_footprint
 ```
+
+`odom -> base_footprint` 는 **EKF 가 냅니다.** `diff_drive_controller` 쪽은 `enable_odom_tf: false` 로 꺼 두었습니다 — 둘 다 켜면 같은 변환을 두 노드가 발행해 좌표계가 꼬입니다.
 
 - **시각 오도메트리 (Visual Odometry)**: `rtabmap_odom/rgbd_odometry`. 휠 오도메트리 데이터를 모션 추정의 초기 예측값(Guess)으로 활용하여 시각적 특징점이 부족한 구간에서도 안정적으로 동작합니다.
 - **SLAM / 루프 클로저 / 점유 격자**: `rtabmap_slam/rtabmap` 노드가 `/map` 및 `map -> vodom` TF를 발행합니다. AMCL 및 map_server는 사용하지 않습니다.
@@ -289,6 +367,56 @@ map --(rtabmap)--> vodom --(rgbd_odometry + vodom_tf_relay)--> odom
 0.60 m 폭 통로가 탈락한 이유: 직진 통과 중 로봇 위치의 편심 허용 범위(±100 mm) 끝단에 위치할 경우 회전이 불가능해집니다. 즉, 정상 주행 중 임의 위치에 멈추는 것만으로도 복구 회전이 불가능한 상태가 됩니다. 또한 단방향 여유 17 mm는 본 시스템의 SLAM 위치 추정 오차(중앙값 21 mm)보다 작아 위험합니다.
 
 **따라서 SLAM 위치 추정 정확도와 통로 폭은 연계된 리소스 예산 관계입니다.** `detection_rate:=1.0` 설정처럼 SLAM 정확도를 저하시키는 옵션은 회전 여유 공간을 직접적으로 축소시킵니다.
+
+### 충전 도킹
+
+액션 규격은 Nav2 순정입니다 — `/dock_robot`, `/undock_robot`, `config/docking.yaml` 의 `dock_database`. 실기 전환 시 도크 좌표만 바꾸면 되고 BT 연동도 그대로 살아 있습니다. **접근 방식만 `docking_mode` 로 고릅니다.**
+
+| | `staged` (기본) | `smooth` |
+|---|---|---|
+| 구현 | `scripts/staged_dock.py` (자체) | Nav2 순정 `opennav_docking` |
+| 방식 | 정지 → 측정 → 보정 → 재측정 반복 | 마커를 추종하는 곡선 접근 |
+| 세로 오차 (중앙값/최대) | **2.6 / 2.6 mm** | 20.3 / 22.7 mm |
+| 가로 오차 (중앙값/최대) | 1.2 / 5.5 mm | **0.8 / 2.4 mm** |
+| 각도 오차 (중앙값/최대) | 0.6 / 1.3도 | 0.4 / 1.8도 |
+| 소요 시간 (중앙값) | 25.6초 | **8.6초** |
+
+`staged` 를 기본으로 둔 이유는 **세로 오차가 한 자릿수 이상 좋기 때문입니다.** 정지 상태에서 잰 정확한 값을 그대로 최종 자세로 가져가는 반면, 곡선 접근은 그 측정값을 움직이면서 소비합니다. 대신 3배 느립니다 — 그 대가로 "어느 단계에서 틀어졌는지 로그만 보면 아는" 검사 가능성을 얻습니다.
+
+```
+Nav2 --(staging pose, 도크 앞 0.7 m)--> staged_dock / docking_server --> 도크
+카메라 --> dock_marker_board (마커 3장 보드) --> /detected_dock_pose --> SimpleChargingDock
+battery_sim / 실기 BMS --> /battery_state --> auto_dock (저전압 복귀 판단)
+```
+
+**일반 Nav2 주행으로 도크에 붙일 수 없는 이유가 두 가지 있습니다.** 코스트맵 팽창(0.40 m)이 벽 앞을 통째로 막아 경로계획 자체가 되지 않고, SLAM 위치 오차(중앙값 21 mm / 90% 46 mm)가 충전 접점이 요구하는 정밀도보다 큽니다. 그래서 마지막 구간은 지도 좌표가 아니라 **지금 카메라에 보이는 마커**를 기준으로 붙습니다.
+
+**마커 3장을 하나의 보드로 풉니다.** 스테이션에 가이드 벽이 없어 최종 각도를 인식이 전적으로 결정하는데, 평면 마커 한 장은 자세 모호성 때문에 각도가 1.3 m 에서 4.77도까지 튑니다. 좌우로 벌린 3장의 코너 12개를 함께 풀면(`estimatePoseBoard`) 같은 자리에서 각도 오차가 0.01도 수준으로 떨어집니다.
+
+**`smooth` 에서만: 자세를 0.65 m 에서 확정하고 그 뒤로는 직진합니다.** 더 가까이 가면 마커는 커지지만 바깥 두 장이 화각을 벗어나기 시작하고, 마지막 프레임이 가장 부정확합니다. `docking_server` 는 마지막 검출값을 목표로 얼려서 들어가므로 그대로 두면 **가장 나쁜 관측으로 마무리**하게 됩니다.
+
+**`staged` 의 정렬 완료 판정은 축별 허용치가 아니라 "접촉 시점의 예상 횡오차" 하나입니다.** 횡오차와 각도오차는 독립이 아니어서, 정렬을 마치고 직진하는 동안 남은 각도가 그대로 횡오차로 바뀝니다:
+
+```
+접촉 시점 횡오차 = 정렬시 횡오차 − 직진거리 × sin(각도오차)
+```
+
+0.52 m 직진 기준으로 0.5도가 4.5 mm 입니다. 그래서 **예전 설정(횡 3 mm / 각도 0.5도)은 서로 앞뒤가 안 맞았습니다** — 허용한 각도만으로 4.5 mm 가 생기는데 그보다 작은 3 mm 를 맞추려고 크랩 기동을 반복했습니다(회당 15~20초 손해). 지금은 `contact_lateral_budget` (동판 허용 ±34 mm 의 절반인 15 mm) 하나로 판정하고 크랩 보정량도 이 예상값을 씁니다. 각도에는 느슨한 상한만 두는데 이건 정밀도용이 아니라 측정 이상 감시용입니다. 예측 모델의 실측 검증(예상 → Gazebo 실제): **+10.4 → +5.5 mm, +0.9 → +0.9 mm, +0.1 → +1.2 mm** — 부호가 맞고 크기는 보수적입니다.
+
+| 항목 | 값 | 근거 |
+|---|---|---|
+| 마커 | ArUco `DICT_4X4_50` id 1/0/2, 0.10 m, 0.16 m 간격 | 424×240 에서 4×4 는 24 px 이면 읽힘 (6×6 은 32 px 필요) |
+| 마커 중심 높이 | 0.31 m | 화각 계산상 최적. 낮추면 근거리에서 화면 아래로 잘림 |
+| 자세 확정 거리 | 0.65 m (로봇 중심 기준) | 0.55 m 부근에 검출 절벽. 그 앞에서 확정 |
+| 확정 지점 정확도 | 거리 ~1 mm / 가로 ~0.6 mm / 각도 ~0.01도 | `tools/dock_calib.py` 실측 |
+| 동판 / 포고핀 | 75×100 mm / 6핀 2×3 피치 2.54 mm ×2 | 접촉 허용 세로 ±48 mm, 가로 ±34 mm (동판 − 핀 배열 6.1×3.5 mm) |
+| 포고핀 브래킷 높이 | 0.045 m | **0.030 ~ 0.060 m 사이에만 놓을 수 있음** (아래 참고) |
+
+**브래킷 높이가 이 로봇에서 가장 빡빡한 치수입니다.** 접지고가 0.060 m 인데 코스트맵 `min_obstacle_height` 가 0.030 m 라, 로봇은 30 mm 미만 물체를 장애물로 보지 않고 그냥 밟고 지나갑니다. 브래킷을 그보다 낮추면 코스트맵이 무시한 문턱에 그대로 걸리고, 0.060 m 위로 올리면 섀시 안에 들어가 동판에 닿지 않습니다. 그래서 **동판을 바닥에 평평하게 깔 수 없고 0.040 m 높이로 올려야 합니다.** 좌우 위치도 바퀴(구동륜 ±0.17, 캐스터 ±0.14)를 피해 |y| < 0.11 띠 안에 들어가야 합니다 — 바퀴가 동판 위로 올라가면 로봇 전체가 같이 들려 간격이 그대로 유지됩니다.
+
+접근 구간(마지막 0.7 m)에서는 코스트맵 충돌 검사를 끕니다 — 도크 패널과 뒷벽의 팽창이 그 구간 전체를 덮어 켜 두면 도킹이 실패합니다. **실기에서는 이 구간을 위해 범퍼 스위치나 모터 전류 제한 같은 소프트웨어 밖의 보호 수단이 필요합니다.**
+
+측정 도구는 `tools/dock_calib.py`(회전 보정값·인식 정확도), `tools/dock_range.py`(검출 범위·편차), `tools/dock_test.py`(반복 도킹 성공률·정렬 오차)입니다. 실측 수치와 함정 사례는 `CLAUDE.md` 의 "충전 도킹" 절에 정리되어 있습니다.
 
 ### 주요 시스템 한계 사항
 
