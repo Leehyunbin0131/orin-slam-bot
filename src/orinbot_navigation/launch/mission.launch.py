@@ -1,23 +1,17 @@
-"""임무 시험용 런처 — 로봇을 도크에 세워 두고 명령을 기다립니다.
+"""Mission test launcher: spawns the robot docked and waits for commands.
 
     ros2 launch orinbot_navigation mission.launch.py
 
-이것을 띄워 두고, 다른 터미널에서 임무 명령을 보냅니다.
+Leave this running and send commands from another terminal.
 
-    ros2 service call /mission/start_mapping std_srvs/srv/Trigger   # 자동 매핑
-    ros2 service call /mission/cancel        std_srvs/srv/Trigger   # 중단 후 복귀
-    ros2 topic echo /mission/state                                  # 진행 상황
+    ros2 service call /mission/start_mapping std_srvs/srv/Trigger
+    ros2 service call /mission/cancel        std_srvs/srv/Trigger
+    ros2 topic echo /mission/state
 
-로봇은 도크에서 시작해 임무가 없으면 계속 충전하며 대기하고, 명령을 받으면
-절전 해제 -> 언도킹 -> 임무 수행 -> 복귀 -> 대기 순으로 한 사이클을 돕니다.
-
-navigation.launch.py 를 그대로 쓰되 임무 사이클에 맞게 세 가지를 바꿉니다.
-
-- 탐사를 **멈춘 채로** 띄웁니다. 안 그러면 임무 명령 없이 로봇이 나갑니다.
-- 탐사 완료 후 시작 지점 복귀를 **끕니다**. 도킹이 진입점까지 데려가므로
-  같은 길을 두 번 갑니다.
-- 로봇을 **도킹 완료 자세**에 스폰합니다. 그래야 dock_register 가 부팅 때
-  도크 좌표를 잡고, auto_dock 이 충전을 보고 대기 상태로 들어갑니다.
+Same stack as navigation.launch.py with three changes for the mission cycle:
+exploration starts paused (otherwise the robot leaves with no command), its
+return-home is off (docking already drives to staging), and the robot spawns
+at the docked pose so dock_register and auto_dock see a charging robot.
 """
 
 from launch import LaunchDescription
@@ -38,24 +32,22 @@ def generate_launch_description():
                               description='Gazebo GUI'),
         DeclareLaunchArgument(
             'use_sim', default_value='true',
-            description='false 면 시뮬레이터 없이 임무 스택만 띄웁니다'),
+            description='false runs the mission stack without the simulator'),
         DeclareLaunchArgument(
             'database_path', default_value='~/.ros/orinbot_rtabmap.db',
-            description='RTAB-Map 데이터베이스. 월드를 바꾸면 함께 바꾸세요'),
+            description='RTAB-Map database; change it when changing worlds'),
         DeclareLaunchArgument('initial_soc', default_value='0.95'),
         DeclareLaunchArgument(
             'battery_speedup', default_value='1.0',
-            description='배터리 방전/충전 배속'),
+            description='Battery discharge/charge speedup'),
         DeclareLaunchArgument(
             'mission_timeout', default_value='0.0',
-            description='임무 한도 [s]. 0 이면 무제한'),
+            description='Mission timeout [s], 0 = unlimited'),
     ]
 
-    # **이 include 는 GroupAction 으로 감싸지 않습니다.** navigation.launch.py 는
-    # SLAM/Nav2/도킹을 OnProcessExit 이벤트 핸들러로 **나중에** 띄우는데,
-    # GroupAction 은 스코프를 만들었다가 include 가 끝날 때 닫습니다. 그러면
-    # 뒤늦게 실행되는 핸들러가 인자를 못 찾아 `launch configuration
-    # 'localization' does not exist` 로 스택 전체가 내려갑니다.
+    # Not wrapped in a GroupAction: navigation.launch.py starts SLAM/Nav2/
+    # docking from OnProcessExit handlers, and a group closes its scope when
+    # the include returns, so those handlers lose their arguments.
     stack = IncludeLaunchDescription(
         PythonLaunchDescriptionSource([
             PathJoinSubstitution([nav_share, 'launch', 'navigation.launch.py'])]),
@@ -75,8 +67,8 @@ def generate_launch_description():
         }.items(),
     )
 
-    # 노드 이름이 곧 명령 이름입니다 — `mission` 이라 서비스가
-    # /mission/start_mapping, /mission/cancel 이고 상태가 /mission/state 입니다.
+    # The node name sets the command namespace: /mission/start_mapping,
+    # /mission/cancel, /mission/state.
     manager = Node(
         package='orinbot_navigation',
         executable='mission_manager.py',

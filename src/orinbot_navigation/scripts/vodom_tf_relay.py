@@ -66,10 +66,10 @@ class VodomTfRelay(Node):
         self.correction_q = np.array([0.0, 0.0, 0.0, 1.0])
         self.have_correction = False
 
-        # 도킹처럼 카메라가 벽을 코앞에서 보는 구간에서는 시각 오도메트리가
-        # 깨지므로 보정을 얼립니다. 얼린 동안에도 TF 는 계속 나가야 합니다 —
-        # 끊으면 map 과 base_footprint 가 다른 트리로 갈라집니다.
-        # 보정 자체가 천천히 변하는 값이라 짧은 구간은 휠+IMU 로 충분합니다.
+        # Freeze the correction where visual odometry breaks down (docking,
+        # camera close to a wall). TF must keep publishing while frozen or
+        # map and base_footprint split into separate trees. The correction
+        # drifts slowly, so wheels + IMU cover a short leg.
         self.frozen = False
         self.create_service(Empty, '~/pause', self._srv_pause)
         self.create_service(Empty, '~/resume', self._srv_resume)

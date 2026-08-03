@@ -1,27 +1,25 @@
 #!/usr/bin/env python3
-"""도킹을 여러 초기 조건으로 **동시에** 시험하고 표로 모은다.
+"""Run docking from several initial conditions in parallel and tabulate.
 
-    python3 tools/dock_bench.py                 # 기본 케이스 묶음
-    python3 tools/dock_bench.py --jobs 4        # 동시 인스턴스 수
-    python3 tools/dock_bench.py --repeat 3      # 케이스당 반복
+    python3 tools/dock_bench.py                 # default case set
+    python3 tools/dock_bench.py --jobs 4        # concurrent instances
+    python3 tools/dock_bench.py --repeat 3      # repeats per case
 
-왜 이렇게 하나
---------------
-도킹 파라미터 하나 바꿀 때마다 스택을 3분씩 올렸다 내리면 하루에 몇 번
-못 돕니다. 아이작심처럼 한 프로세스 안에서 환경을 벡터화하는 것은
-Gazebo 로 안 되지만, **독립 인스턴스를 격리해 N개 띄우는 것**은 됩니다.
+Bringing the whole stack up and down for every parameter change costs three
+minutes a run. Gazebo cannot vectorise environments in one process, but N
+isolated instances do work, isolated on two axes:
 
-격리는 두 겹입니다:
-    ROS_DOMAIN_ID   ROS 2 디스커버리
+    ROS_DOMAIN_ID   ROS 2 discovery
     GZ_PARTITION    gz-transport
-실측: 두 인스턴스를 띄웠을 때 각 도메인이 /clock 발행자를 1개씩만 봅니다
-(섞였다면 2개). 인스턴스당 약 1 코어 / 1 GB.
 
-시험대는 SLAM 과 Nav2 를 띄우지 않습니다 (dock_bench.launch.py 참고).
-그래서 `_goto_entry` 대신 **로봇을 정렬 지점 근처에 바로 스폰**하고,
-케이스마다 그 스폰 자세를 흔들어 초기 오차를 만듭니다.
+Each domain then sees exactly one /clock publisher. Roughly 1 core and 1 GB
+per instance.
 
-판정 기준은 동판 접촉 허용치입니다: 세로 ±48 mm / 가로 ±34 mm / 각도 ±6.3도.
+The bench runs without SLAM or Nav2 (see dock_bench.launch.py), so instead of
+_goto_entry the robot spawns near the alignment point and each case perturbs
+that spawn pose to create the initial error.
+
+Pass/fail uses the contact tolerance: +-48 mm long, +-34 mm lat, +-6.3 deg.
 """
 
 import argparse
@@ -36,21 +34,21 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 
 WS = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DOCK = (1.0, -3.67, 1.5708)          # 도킹 완료 자세 (후진 도킹이라 벽을 등짐)
+DOCK = (1.0, -3.64, 1.5708)          # docked pose; faces away when reversed
 TOL_LON, TOL_LAT, TOL_YAW = 0.048, 0.034, math.radians(6.3)
-# 정렬을 시작할 기준 자세. 마커면(-3.894)에서 약 0.79 m.
+# Reference spawn for alignment, ~0.79 m from the marker face (-3.894).
 BASE = (1.0, -3.10, -1.5708)
 
-# (이름, 스폰 dx[m], dy[m], dyaw[도], 파라미터 덮어쓰기)
+# (name, spawn dx [m], dy [m], dyaw [deg], parameter overrides)
 CASES = [
-    ('기준',            0.00,  0.00,  0.0, {}),
-    ('가로 +5cm',       0.05,  0.00,  0.0, {}),
-    ('가로 -5cm',      -0.05,  0.00,  0.0, {}),
-    ('각도 +8도',       0.00,  0.00,  8.0, {}),
-    ('각도 -8도',       0.00,  0.00, -8.0, {}),
-    ('멀리 +10cm',      0.00,  0.10,  0.0, {}),
-    ('회전점 0.70',     0.00,  0.00,  0.0, {'rotate_distance': 0.70}),
-    ('예산 15mm',       0.00,  0.00,  0.0, {'contact_lateral_budget': 0.015}),
+    ('baseline',        0.00,  0.00,  0.0, {}),
+    ('lat +5cm',        0.05,  0.00,  0.0, {}),
+    ('lat -5cm',       -0.05,  0.00,  0.0, {}),
+    ('yaw +8deg',       0.00,  0.00,  8.0, {}),
+    ('yaw -8deg',       0.00,  0.00, -8.0, {}),
+    ('far +10cm',       0.00,  0.10,  0.0, {}),
+    ('turn 0.70',       0.00,  0.00,  0.0, {'rotate_distance': 0.70}),
+    ('budget 15mm',     0.00,  0.00,  0.0, {'contact_lateral_budget': 0.015}),
 ]
 
 
@@ -63,12 +61,12 @@ def env_for(idx):
 
 
 def overlay(base_yaml, overrides, workdir):
-    """staged_dock 파라미터만 덮어쓴 임시 yaml 을 만든다."""
+    """Write a temporary yaml with only staged_dock parameters overridden."""
     if not overrides:
         return base_yaml
     txt = open(base_yaml, encoding='utf-8').read()
     for k, v in overrides.items():
-        # "    key: value" 형태만 바꿉니다 (주석 줄은 건드리지 않음).
+        # Only "    key: value" lines; comments are left alone.
         out, done = [], False
         for line in txt.split('\n'):
             s = line.strip()
@@ -78,17 +76,16 @@ def overlay(base_yaml, overrides, workdir):
             else:
                 out.append(line)
         if not done:
-            raise SystemExit('파라미터 %s 를 %s 에서 찾지 못했습니다' % (k, base_yaml))
+            raise SystemExit('parameter %s not found in %s' % (k, base_yaml))
         txt = '\n'.join(out)
     path = os.path.join(workdir, 'docking.yaml')
     open(path, 'w', encoding='utf-8').write(txt)
     return path
 
 
-# 프로브는 별도 프로세스로 돌립니다 — 인스턴스마다 ROS_DOMAIN_ID 가 달라
-# 한 파이썬 프로세스에서 여러 도메인을 동시에 볼 수 없기 때문입니다.
-# 도크 좌표는 아래에서 한 줄로 앞에 붙입니다 (본문에 % 서식이 많아
-# 문자열 포매팅을 쓰면 충돌합니다).
+# The probe runs as its own process: one Python process cannot watch several
+# ROS_DOMAIN_IDs at once. The dock pose is prepended as a line below, since
+# the body contains % formatting.
 PROBE_BODY = r'''
 import json, math, sys, time, rclpy
 from rclpy.node import Node
@@ -107,24 +104,24 @@ ac = ActionClient(n, DockRobot, 'dock_robot')
 out = {'ok': False, 'why': ''}
 try:
     if not ac.wait_for_server(timeout_sec=120):
-        out['why'] = 'dock_robot 액션 서버 없음'; raise SystemExit
+        out['why'] = 'no dock_robot action server'; raise SystemExit
     t0 = time.time()
     while s['m'] == 0 and time.time() - t0 < 60:
         rclpy.spin_once(n, timeout_sec=0.2)
     if s['m'] == 0:
-        out['why'] = '마커 미검출 (스폰 위치에서 도크가 안 보임)'; raise SystemExit
+        out['why'] = 'no marker detected from the spawn pose'; raise SystemExit
     g = DockRobot.Goal(); g.use_dock_id = True; g.dock_id = 'home_dock'
-    g.navigate_to_staging_pose = False      # Nav2 가 없으므로 스테이징 생략
+    g.navigate_to_staging_pose = False      # no Nav2 on the bench
     t0 = time.time()
     f = ac.send_goal_async(g); rclpy.spin_until_future_complete(n, f, timeout_sec=30)
     gh = f.result()
     if gh is None or not gh.accepted:
-        out['why'] = '목표 거절'; raise SystemExit
+        out['why'] = 'goal rejected'; raise SystemExit
     rf = gh.get_result_async()
     while not rf.done() and time.time() - t0 < 300:
         rclpy.spin_once(n, timeout_sec=0.1)
     if not rf.done():
-        out['why'] = '시간 초과'; raise SystemExit
+        out['why'] = 'timed out'; raise SystemExit
     res = rf.result()
     out['secs'] = time.time() - t0
     for _ in range(40): rclpy.spin_once(n, timeout_sec=0.05)
@@ -173,9 +170,9 @@ def run_case(idx, name, dx, dy, dyaw, overrides, repeat):
                 line = next((l for l in probe.stdout.split('\n')
                              if l.startswith('BENCH')), None)
                 results.append(json.loads(line[5:]) if line
-                               else {'ok': False, 'why': '프로브 출력 없음'})
+                               else {'ok': False, 'why': 'no probe output'})
             except subprocess.TimeoutExpired:
-                results.append({'ok': False, 'why': '프로브 시간 초과'})
+                results.append({'ok': False, 'why': 'probe timed out'})
             finally:
                 log.close()
                 try:
@@ -191,12 +188,12 @@ def run_case(idx, name, dx, dy, dyaw, overrides, repeat):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('--jobs', type=int, default=4, help='동시 인스턴스 수')
-    ap.add_argument('--repeat', type=int, default=1, help='케이스당 반복')
+    ap.add_argument('--jobs', type=int, default=4, help='concurrent instances')
+    ap.add_argument('--repeat', type=int, default=1, help='repeats per case')
     a = ap.parse_args()
 
-    print('케이스 %d개 x %d회, 동시 %d개' % (len(CASES), a.repeat, a.jobs))
-    print('인스턴스당 약 1 코어 / 1 GB — nproc %d, 여유 메모리를 확인하세요\n'
+    print('%d cases x %d runs, %d concurrent' % (len(CASES), a.repeat, a.jobs))
+    print('~1 core / 1 GB per instance; nproc %d, check free memory\n'
           % os.cpu_count())
     t0 = time.time()
     with ThreadPoolExecutor(max_workers=a.jobs) as ex:
@@ -204,7 +201,7 @@ def main():
         rows = [f.result() for f in futs]
 
     print('%-14s %7s %9s %9s %8s %7s  %s'
-          % ('케이스', '성공', '세로mm', '가로mm', '각도도', '초', '비고'))
+          % ('case', 'ok', 'lon mm', 'lat mm', 'yaw deg', 's', 'note'))
     print('-' * 78)
     for name, ov, rs in rows:
         good = [r for r in rs if r.get('ok')]
@@ -219,9 +216,9 @@ def main():
                  f('lon') * 1000, f('lat') * 1000,
                  math.degrees(f('yaw')), f('secs'),
                  ' '.join('%s=%s' % kv for kv in ov.items())))
-    print('\n허용치: 세로 ±%.0f mm / 가로 ±%.0f mm / 각도 ±%.1f도'
+    print('\ntolerance: lon +-%.0f mm / lat +-%.0f mm / yaw +-%.1f deg'
           % (TOL_LON * 1000, TOL_LAT * 1000, math.degrees(TOL_YAW)))
-    print('총 %.0f 초' % (time.time() - t0))
+    print('total %.0f s' % (time.time() - t0))
 
 
 if __name__ == '__main__':

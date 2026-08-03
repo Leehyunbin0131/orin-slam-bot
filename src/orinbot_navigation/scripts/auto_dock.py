@@ -4,19 +4,17 @@
     /battery_state --> [ AutoDock ] --> /dock_robot   (opennav_docking)
                                     --> /undock_robot
 
-State Architecture
-------------------
-    IDLE      : 도크 밖에 있고 배터리를 감시하는 중.
-    RETURNING : 도킹 액션(DockRobot) 진행 중.
-    CHARGING  : 도크에 붙어 대기 중. **완충되어도 스스로 나가지 않습니다** —
-                나가는 것은 임무 관리자가 정합니다. 실기 배터리는 내장 BMS 가
-                전류를 끊으므로 붙은 채로 두어도 됩니다.
-    UNDOCKING : 언도킹 액션(UndockRobot) 진행 중.
+States (published on /dock_state)
+--------------------------------
+    IDLE      : out of the dock, watching the battery
+    RETURNING : DockRobot action in progress
+    CHARGING  : docked and waiting. Does not leave on its own even when full;
+                mission_manager decides that. The real battery's BMS cuts
+                current, so staying attached is fine.
+    UNDOCKING : UndockRobot action in progress
 
-현재 상태를 `/dock_state` 로 발행하고, 임무 관리자는 `~/leave` / `~/return`
-서비스로 전환을 요청합니다. 두 서비스는 **요청만 걸어 두고 즉시 돌아옵니다** —
-실제 완료는 `/dock_state` 로 확인하세요. 서비스 안에서 도킹이 끝나기를 기다리면
-그 몇십 초 동안 응답이 묶입니다.
+mission_manager requests transitions via ~/leave and ~/return. Both only queue
+the request and return immediately -- watch /dock_state for completion.
 
 Exploration Control
 -------------------
@@ -60,9 +58,9 @@ class AutoDock(Node):
         p('max_attempts', 5)
         # SOC hysteresis to prevent state oscillation
         p('soc_hysteresis', 0.03)
-        # 완충되면 스스로 나갈지 여부. **기본은 false 입니다** — 임무가 없으면
-        # 도크에서 대기하는 것이 정상 동작이고, 나가는 시점은 임무 관리자가
-        # 정합니다. true 로 두면 임무와 무관하게 로봇이 돌아다닙니다.
+        # Leave on its own when fully charged. Default off: staying docked
+        # with no mission is the intended behaviour, and mission_manager
+        # decides when to leave.
         p('auto_undock', False)
         p('pause_exploration', True)
         # Grace ticks before confirming disconnected charging state
@@ -126,14 +124,14 @@ class AutoDock(Node):
         self.create_subscription(BatteryState, '/battery_state', self._battery, 10)
         self.explore_pub = self.create_publisher(Bool, '/exploration_enabled', 10)
 
-        # 늦게 뜬 임무 관리자도 현재 상태를 바로 받도록 TRANSIENT_LOCAL 입니다.
+        # TRANSIENT_LOCAL so a late mission_manager gets the current state.
         latched = QoSProfile(depth=1)
         latched.reliability = QoSReliabilityPolicy.RELIABLE
         latched.durability = QoSDurabilityPolicy.TRANSIENT_LOCAL
         self.state_pub = self.create_publisher(String, '/dock_state', latched)
 
-        # 임무 관리자의 요청. 서비스 안에서 처리하지 않고 플래그만 세워
-        # 다음 틱에서 실행합니다 — 상태 전이의 단일 진입점을 유지합니다.
+        # Requests only set a flag; the tick executes them, keeping one
+        # entry point for state transitions.
         self.request = None
         self.create_service(Trigger, '~/leave', self._srv_leave,
                             callback_group=self.cbg)
@@ -167,7 +165,7 @@ class AutoDock(Node):
             self.state = s
             self._publish_state()
 
-    # ---------------- 임무 관리자 요청 ----------------
+    # ---------------- Mission manager requests ----------------
 
     def _srv_leave(self, _req, res):
         if self.state in (RETURNING, UNDOCKING):
@@ -184,7 +182,7 @@ class AutoDock(Node):
         if self.state == CHARGING:
             res.success, res.message = True, '이미 도크에 있습니다'
             return res
-        # 임무 복귀는 배터리와 무관하므로 실패 이력과 대기 시간을 지웁니다.
+        # A mission return is unrelated to battery: clear retry state.
         self.attempts = 0
         self.next_try = None
         self.request = 'return'
@@ -206,7 +204,7 @@ class AutoDock(Node):
             return
         now = self.get_clock().now().nanoseconds * 1e-9
 
-        # 임무 관리자의 요청이 배터리 판단보다 우선합니다.
+        # Requests take priority over the battery logic.
         req, self.request = self.request, None
         if req == 'leave' and self.state in (IDLE, CHARGING):
             self._start_undocking('임무 시작')
@@ -217,7 +215,7 @@ class AutoDock(Node):
 
         if self.state == IDLE:
             if self.charging:
-                # 충전이 잡히면 완충 여부와 상관없이 대기 상태로 들어갑니다.
+                # Any charge means docked, full or not.
                 self.get_logger().info('충전이 감지되어 도크 대기 상태로 들어갑니다')
                 self._set_state(CHARGING)
                 self.not_charging_ticks = 0
@@ -297,9 +295,8 @@ class AutoDock(Node):
     def _enter_power_save(self):
         if not self.power_save or self.saving:
             return
-        # 플래그를 **블록하기 전에** 세웁니다. 아래 서비스 호출이 몇 초 동안
-        # 막혀 있는 사이 다른 콜백이 들어와 언도킹을 걸면, Nav2 가 켜진 채로
-        # PAUSE 되어 그대로 멈춥니다.
+        # Set the flag before blocking: the calls below take seconds, and an
+        # undock slipping in meanwhile would leave Nav2 paused while running.
         self.saving = True
         self.get_logger().info('Charging started -- entering power save mode')
         self._call_empty(self.slam_pause)
@@ -346,8 +343,7 @@ class AutoDock(Node):
         self.dock_ac.send_goal_async(g).add_done_callback(self._accepted)
 
     def _start_undocking(self, why):
-        # 절전을 먼저 풀어야 합니다. 인지가 죽은 채로 나가면 아무것도 못 보고
-        # 움직입니다.
+        # Release power save first, or the robot drives blind.
         if not self._exit_power_save():
             self.get_logger().error('절전 해제 실패 — 언도킹을 중단합니다')
             return

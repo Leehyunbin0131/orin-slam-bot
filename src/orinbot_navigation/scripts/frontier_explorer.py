@@ -67,8 +67,8 @@ class FrontierExplorer(Node):
         # Overall exploration timeout [s] (0 for unlimited)
         p('explore_timeout', 0.0)
         p('publish_markers', True)
-        # 멈춘 채로 시작합니다. 임무 관리자가 켤 때까지 목표를 내지 않습니다 —
-        # 도크에서 부팅한 직후에 탐사가 돌면 임무 명령 없이 로봇이 나갑니다.
+        # Start paused so nothing is issued until mission_manager enables it;
+        # otherwise the robot leaves the dock with no mission commanded.
         p('start_paused', False)
         # Occupancy thresholds
         p('free_threshold', 25)
@@ -139,8 +139,8 @@ class FrontierExplorer(Node):
         self.paused = bool(g('start_paused'))
         self.create_subscription(Bool, 'exploration_enabled', self._on_enable, 10)
 
-        # 임무 관리자가 완료를 판정하는 근거입니다. 늦게 뜬 구독자도 현재
-        # 상태를 받도록 TRANSIENT_LOCAL 입니다.
+        # How mission_manager detects completion. TRANSIENT_LOCAL so a late
+        # subscriber still gets the current state.
         self.status_pub = self.create_publisher(String, 'exploration_state', latched)
         self.create_service(Trigger, '~/reset', self._srv_reset)
         self._publish_status()
@@ -176,11 +176,10 @@ class FrontierExplorer(Node):
             self._publish_status()
 
     def _srv_reset(self, _req, res):
-        """다음 임무를 위해 탐사 상태를 지웁니다.
+        """Clear exploration state for the next mission.
 
-        완료 플래그는 한 번 서면 계속 남으므로, 지우지 않으면 두 번째 임무가
-        시작하자마자 '이미 완료'로 끝납니다. 블랙리스트와 기준 위치도 지난
-        임무의 것이라 함께 버립니다.
+        The completion flag is sticky, so without this a second mission ends
+        immediately. The blacklist and home pose belong to the previous run.
         """
         self._cancel()
         self.finished = False

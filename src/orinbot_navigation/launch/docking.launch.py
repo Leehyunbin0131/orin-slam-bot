@@ -144,8 +144,8 @@ def generate_launch_description():
         condition=IfCondition(LaunchConfiguration('auto_dock')),
     )
 
-    # 도크에 붙은 채 부팅하면 그 자세를 도크 좌표로 등록합니다.
-    # 스테이션을 옮겨도 로봇을 한 번 밀어 넣고 재부팅하면 끝입니다.
+    # Registers the dock pose when booting while charging, so moving the
+    # station only needs one push-in and a reboot.
     registrar = Node(
         package='orinbot_navigation',
         executable='dock_register.py',

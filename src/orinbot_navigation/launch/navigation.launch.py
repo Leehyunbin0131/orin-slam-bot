@@ -20,20 +20,18 @@ from launch_ros.substitutions import FindPackageShare
 
 
 def wait_for_topic(topic, timeout_s, label):
-    """토픽에 첫 메시지가 올 때까지 막는 프로세스.
+    """Block until the first message arrives on a topic.
 
-    시간이 초과돼도 다음 단계는 진행합니다 — 무한정 멈춰 있는 것보다
-    일단 띄우고 로그로 원인을 보는 편이 낫습니다.
+    Continues on timeout: starting anyway and reading the log beats hanging.
 
-    QoS 는 기본값(VOLATILE)으로 둡니다. /odom 은 VOLATILE, /map 은
-    TRANSIENT_LOCAL 이라 한쪽에 맞추면 다른 쪽이 매칭되지 않는데,
-    VOLATILE 구독자는 양쪽 모두에서 받을 수 있습니다.
+    Default (VOLATILE) QoS -- /odom is VOLATILE and /map is TRANSIENT_LOCAL,
+    and a VOLATILE subscriber matches both.
     """
     return ExecuteProcess(
         cmd=['bash', '-c',
              f'timeout {timeout_s} ros2 topic echo --once {topic} > /dev/null '
-             f'&& echo "[{label}] {topic} 확인" '
-             f'|| echo "[{label}] {topic} 대기 초과 — 그대로 진행합니다"'],
+             f'&& echo "[{label}] {topic} ok" '
+             f'|| echo "[{label}] {topic} timed out, continuing"'],
         output='screen',
         name=label,
     )
@@ -79,11 +77,11 @@ def generate_launch_description():
             description='Autonomous frontier exploration toggle'),
         DeclareLaunchArgument(
             'explore_paused', default_value='false',
-            description='탐사를 멈춘 채로 시작 (임무 관리자가 켤 때까지 대기)'),
+            description='Start exploration paused until mission_manager enables it'),
         DeclareLaunchArgument(
             'explore_return_home', default_value='true',
-            description='탐사 완료 후 시작 지점으로 복귀 (임무 사이클에서는 '
-                        '도킹이 진입점까지 데려가므로 false 가 맞습니다)'),
+            description='Return to the start pose after exploring; false for '
+                        'the mission cycle, where docking drives to staging'),
         DeclareLaunchArgument(
             'dock', default_value='true',
             description='Charging docking stack toggle'),
@@ -96,12 +94,10 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'initial_soc', default_value='0.85',
             description='Initial battery state of charge (0 to 1)'),
-        # 로봇의 시작 자세. 임무 사이클은 도크에서 시작하므로 기본값이
-        # 도킹 완료 자세입니다 (docking.yaml 의 dock_x/dock_y, yaw 는
-        # dock_yaw 의 반대 — 후진 도킹이라 도크를 등지고 섭니다).
-        # **docking.yaml 의 dock_distance 를 바꾸면 여기도 함께 바꿉니다.**
-        # 부팅 자세와 실제로 도킹해 멈추는 자세가 달라지면, dock_register 가
-        # 등록하는 도크 좌표가 그만큼 어긋난 채로 남습니다.
+        # Spawn pose. Defaults to the docked pose (docking.yaml dock_x/dock_y,
+        # yaw opposite dock_yaw because docking is reversed). Move these
+        # together with dock_distance, or dock_register stores a pose the
+        # robot never actually reaches.
         DeclareLaunchArgument('x', default_value='1.0'),
         DeclareLaunchArgument('y', default_value='-3.64'),
         DeclareLaunchArgument('yaw', default_value='1.5708'),

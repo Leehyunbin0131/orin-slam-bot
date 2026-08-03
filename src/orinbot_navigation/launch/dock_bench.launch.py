@@ -1,22 +1,20 @@
-"""도킹만 떼어 낸 시험대. 여러 개를 병렬로 띄우기 위한 것입니다.
+"""Docking-only test bench, built to run several instances in parallel.
 
-    ros2 launch orinbot_navigation dock_bench.launch.py x:=1.02 y:=-3.10 yaw:=-1.5708
+    ros2 launch orinbot_navigation dock_bench.launch.py
 
-SLAM 도 Nav2 도 띄우지 않습니다. 도킹 정확도를 재는 데 필요한 것은
-시뮬레이터 + 카메라 + 마커 검출 + staged_dock 뿐이고, 나머지는 인스턴스당
-2~3 코어를 더 먹어 병렬 수를 그만큼 깎습니다.
+No SLAM and no Nav2: measuring docking accuracy only needs the simulator,
+camera, marker detection and staged_dock, and the rest costs 2-3 cores per
+instance.
 
-빠지는 것 때문에 달라지는 동작 두 가지 (둘 다 경고만 남기고 넘어갑니다):
-  - `_goto_entry` 는 Nav2 가 필요하므로 쓰지 않습니다. 시험 스크립트가
-    `navigate_to_staging_pose: false` 로 목표를 걸고, 로봇을 처음부터
-    정렬 지점 근처에 스폰합니다.
-  - `_face_dock` / `_restore_standoff` / SLAM 동결은 map 프레임과
-    rtabmap 서비스가 필요합니다. 없으면 건너뜁니다.
+Two behaviours change without them (both only warn):
+  - `_goto_entry` needs Nav2, so the test script sends the goal with
+    `navigate_to_staging_pose: false` and spawns the robot near the
+    alignment point.
+  - `_face_dock`, `_restore_standoff` and the SLAM freeze need the map frame
+    and rtabmap services, and are skipped.
 
-`twist_mux` 도 없으므로 staged_dock 의 출력을 /cmd_vel 로 바로 보냅니다.
-
-병렬 실행은 인스턴스마다 ROS_DOMAIN_ID 와 GZ_PARTITION 을 다르게 주어
-격리합니다 (실측: 각 도메인이 /clock 발행자를 1개씩만 봅니다).
+There is no twist_mux either, so staged_dock publishes straight to /cmd_vel.
+Parallel runs are isolated per instance by ROS_DOMAIN_ID and GZ_PARTITION.
 """
 
 from launch import LaunchDescription
@@ -38,7 +36,7 @@ def generate_launch_description():
             'params_file',
             default_value=PathJoinSubstitution([nav_share, 'config', 'docking.yaml'])),
         DeclareLaunchArgument('world', default_value='room.sdf'),
-        # 로봇 스폰 자세. 케이스마다 다르게 주어 초기 오차를 만듭니다.
+        # Spawn pose, varied per case to create the initial error.
         DeclareLaunchArgument('x', default_value='1.0'),
         DeclareLaunchArgument('y', default_value='-3.10'),
         DeclareLaunchArgument('yaw', default_value='-1.5708'),
@@ -52,7 +50,7 @@ def generate_launch_description():
             'world': LaunchConfiguration('world'),
             'gui': 'false',
             'use_rviz': 'false',
-            # 코스트맵을 쓰지 않으므로 포인트클라우드 합성을 끕니다.
+            # No costmap here, so skip pointcloud synthesis.
             'use_pointcloud': 'false',
             'x': LaunchConfiguration('x'),
             'y': LaunchConfiguration('y'),
@@ -73,7 +71,7 @@ def generate_launch_description():
         package='orinbot_navigation', executable='staged_dock.py',
         name='staged_dock', output='screen',
         parameters=[params_file, common],
-        # twist_mux 가 없으므로 바로 컨트롤러로 보냅니다.
+        # No twist_mux: publish straight to the controller.
         remappings=[('cmd_vel_dock', '/cmd_vel')],
     )
 

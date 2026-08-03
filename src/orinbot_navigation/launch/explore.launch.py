@@ -13,7 +13,7 @@ def generate_launch_description():
     args = [
         DeclareLaunchArgument(
             'start_paused', default_value='false',
-            description='멈춘 채로 시작 (임무 관리자가 켤 때까지 대기)'),
+            description='Start paused until mission_manager enables it'),
         DeclareLaunchArgument(
             'return_home', default_value='true',
             description='Return to home pose after exploration completes'),

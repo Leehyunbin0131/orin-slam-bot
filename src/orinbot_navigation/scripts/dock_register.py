@@ -1,20 +1,16 @@
 #!/usr/bin/env python3
-"""도크에 붙은 채 부팅했을 때 그 자세를 도크 좌표로 등록합니다.
+"""Registers the dock pose when the robot boots while charging.
 
-    /battery_state (충전 중)  -->  [ DockRegister ]  --> 도크 DB 파일
-                                                     --> staged_dock 파라미터
+    /battery_state --> [ DockRegister ] --> dock database file
+                                        --> staged_dock parameters
 
-스테이션을 옮기면 로봇을 한 번 밀어 넣고 재부팅하는 것으로 끝납니다.
-좌표를 손으로 읽어 옮겨 적을 필요가 없습니다.
+Moving the station only requires pushing the robot in once and rebooting.
 
-**저장하는 것은 "도크 앞"이 아니라 "도킹 완료 자세"입니다.** 진입점은
-staged_dock 이 approach_distance 로 계산합니다. 앞으로 빼서 저장하면 코드가
-또 빼기 때문에 진입점이 두 배로 멀어집니다.
+Stores the *docked* pose, not the staging pose -- staged_dock derives staging
+from approach_distance, so pre-offsetting it doubles the distance.
 
-**후진 도킹이면 yaw 에서 180도를 빼야 합니다.** dock_yaw 는 "접근할 때
-바라보는 방향"인데 후진 도킹의 최종 자세는 도크를 등지고 있어 정확히
-반대입니다. 부호를 틀리면 로봇이 도크 반대편으로 진입점을 잡고 마커를
-한 장도 못 봐서, 증상이 "마커 검출 실패"로만 보입니다.
+Reverse docking stores yaw - 180 deg: dock_yaw is the approach heading, while
+the docked robot faces away from the dock.
 """
 
 import math
@@ -52,30 +48,22 @@ class DockRegister(Node):
         p('dock_type', 'orinbot_dock')
         p('map_frame', 'map')
         p('base_frame', 'base_footprint')
-        # docking.yaml 의 staged_dock.reverse_dock 과 같아야 합니다.
+        # Must match staged_dock.reverse_dock.
         p('reverse_dock', True)
-        # Nav2 dock_database 규격 파일. docking_mode:=smooth 로 바꿔도
-        # 그대로 쓸 수 있습니다.
+        # Nav2 dock_database format, so docking_mode:=smooth can reuse it.
         p('database_path', os.path.expanduser('~/.ros/orinbot_docks.yaml'))
 
-        # 부팅 시 자동 등록 여부. 끄면 ~/register 서비스로만 동작합니다.
-        p('auto_register', True)
-        # 충전 전류가 이 값을 넘으면 "도크에 붙어 있다"로 봅니다.
-        # 접촉은 물리적 사실이므로 위치 추정이 아니라 전류로 판정합니다.
-        p('charge_threshold', 0.5)
-        # 첫 배터리 샘플만 보고 판단하면 안 됩니다. 기동 직후에는 아직
-        # 접촉 판정에 필요한 입력이 안 들어와 방전으로 나오는 구간이
-        # 있습니다. 이만큼은 충전이 잡히기를 기다린 뒤에 포기합니다.
+        p('auto_register', True)          # off = ~/register service only
+        # Contact is physical, so judge it by charge current, not by pose.
+        p('charge_threshold', 0.5)        # [A]
+        # Never judge on the first sample -- contact inputs are not up yet at
+        # boot and the battery reads as discharging for a moment.
         p('charge_wait', 20.0)            # [s]
-        # 자세가 이만큼 안에서 이 횟수만큼 연속으로 머물면 SLAM 이
-        # 자리를 잡은 것으로 봅니다.
         p('settle_tolerance', 0.01)       # [m]
-        # 각도도 함께 봅니다. 위치가 멈춘 채 자세만 도는 경우가 있고,
-        # 그 각도가 그대로 접근 방향이 되기 때문입니다.
-        p('settle_tolerance_yaw', 0.0087)  # [rad] 0.5도
+        # Yaw settles separately: it becomes the approach heading.
+        p('settle_tolerance_yaw', 0.0087)  # [rad] 0.5 deg
         p('settle_samples', 10)
         p('settle_timeout', 120.0)        # [s]
-        # 갱신된 좌표를 밀어 넣을 노드들 (dock_x / dock_y / dock_yaw 파라미터)
         p('target_nodes', ['/staged_dock'])
 
         g = lambda n: self.get_parameter(n).value          # noqa: E731
@@ -94,11 +82,9 @@ class DockRegister(Node):
         self.settle_timeout = g('settle_timeout')
         self.targets = [t for t in g('target_nodes') if t]
 
-        # 등록은 TF 안정화를 기다리며 몇 초씩 블록합니다. 재진입 그룹 +
-        # 멀티스레드 실행기가 아니면 그 대기가 실행기를 잡아 TF 콜백과
-        # 서비스 응답이 그 사이 돌지 못합니다. 그러면 안정화 판정이
-        # 같은 값 10개를 보고 무조건 통과하고, 파라미터 반영은 응답을
-        # 못 받아 성공했는데도 실패로 보고됩니다.
+        # Registration blocks for seconds waiting on TF. Without a reentrant
+        # group and a multi-threaded executor that wait starves the TF and
+        # service callbacks it depends on.
         self.cb = ReentrantCallbackGroup()
         self.buf = Buffer()
         self.tl = TransformListener(self.buf, self)
@@ -109,13 +95,11 @@ class DockRegister(Node):
         self.create_service(Trigger, '~/register', self._srv_register,
                             callback_group=self.cb)
 
-        # 재진입 그룹이라 타이머가 이전 회차와 겹칩니다. 진행 여부는
-        # 블록에 들어가기 전에 잠금 안에서 정합니다.
+        # Reentrant group: timers overlap. Claim under the lock before blocking.
         self.lock = threading.Lock()
         self.busy = False
         self.done = False
         if self.auto:
-            # 한 번만 돌면 되므로 타이머로 조건을 기다립니다.
             self.timer = self.create_timer(2.0, self._try_auto,
                                            callback_group=self.cb)
 
@@ -178,7 +162,7 @@ class DockRegister(Node):
 
     # ------------------------------------------------------------------
     def _settled_pose(self):
-        """SLAM 이 자리를 잡을 때까지 기다렸다가 map->base 자세를 냅니다."""
+        """Return map->base once SLAM has settled."""
         hist = []
         t0 = time.time()
         while time.time() - t0 < self.settle_timeout:
@@ -194,7 +178,7 @@ class DockRegister(Node):
             if len(hist) == self.settle_n:
                 xs = [h[0] for h in hist]
                 ys = [h[1] for h in hist]
-                # 각도는 ±pi 경계를 넘을 수 있어 첫 표본 기준 상대각으로 봅니다.
+                # Relative to the first sample: yaw can wrap at +-pi.
                 ds = [wrap(h[2] - hist[0][2]) for h in hist]
                 if (max(xs) - min(xs) < self.settle_tol
                         and max(ys) - min(ys) < self.settle_tol
@@ -214,7 +198,7 @@ class DockRegister(Node):
             return False, '%s->%s 자세가 안정되지 않았습니다' % (self.map_frame, self.base)
         x, y, yaw_docked = pose
 
-        # 후진 도킹이면 최종 자세가 접근 방향의 정반대입니다.
+        # Reverse docking: the docked pose is opposite the approach heading.
         dock_yaw = wrap(yaw_docked - math.pi) if self.reverse else yaw_docked
 
         try:
@@ -232,7 +216,7 @@ class DockRegister(Node):
         return True, '(%.3f, %.3f, %.4f)' % (x, y, dock_yaw)
 
     def _write_db(self, x, y, yaw):
-        """Nav2 dock_database 규격으로 씁니다 (docks/type/frame/pose)."""
+        """Write in Nav2 dock_database format (docks/type/frame/pose)."""
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
         tmp = self.db_path + '.tmp'
         with open(tmp, 'w', encoding='utf-8') as f:
@@ -244,10 +228,10 @@ class DockRegister(Node):
             f.write('    type: %s\n' % self.dock_type)
             f.write('    frame: %s\n' % self.map_frame)
             f.write('    pose: [%.4f, %.4f, %.4f]\n' % (x, y, yaw))
-        os.replace(tmp, self.db_path)      # 원자적 교체 — 반쯤 쓰인 파일이 남지 않음
+        os.replace(tmp, self.db_path)      # atomic: never leaves a partial file
 
     def _push_params(self, x, y, yaw):
-        """도는 노드에 좌표를 바로 반영합니다 (재시작 없이)."""
+        """Push the pose to running nodes without restarting them."""
         for node in self.targets:
             cli = self.create_client(SetParameters, '%s/set_parameters' % node,
                                      callback_group=self.cb)

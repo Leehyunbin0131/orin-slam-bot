@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
-"""단계 분리 도킹/언도킹 서버.
+"""Staged docking/undocking server.
 
     /dock_robot   (nav2_msgs/DockRobot)
     /undock_robot (nav2_msgs/UndockRobot)
 
-액션 규격은 opennav_docking 과 같지만, 곡선으로 붙는 대신 정지 -> 측정 ->
-보정 -> 정지 -> 재측정 을 반복해 **정지 상태의 인식 정확도를 그대로 최종
-자세로 옮깁니다.** 횡오차는 차동구동이 옆으로 못 가므로 크랩 기동으로
-없앱니다. 설계 근거는 docs/ros2-lessons.md 6장.
+Same action interface as opennav_docking, but instead of a smooth curve it
+repeats stop -> measure -> correct -> stop -> re-measure, carrying standstill
+perception accuracy into the final pose. Lateral error is removed by a crab
+manoeuvre since a differential drive cannot strafe.
+
+Rationale: docs/ros2-lessons.md chapter 6.
 """
 
 import math
@@ -46,89 +48,72 @@ class StagedDock(Node):
         p = self.declare_parameter
         self.cb = ReentrantCallbackGroup()
 
-        # 도크 자세 — docking.yaml 의 home_dock.pose 와 일치해야 합니다
+        # Dock pose. dock_register overwrites these at boot; these are the
+        # fallback. All distances below are measured from the marker face.
         p('dock_id', 'home_dock')
         p('dock_x', 1.0)
-        p('dock_y', -3.67)
+        p('dock_y', -3.64)
         p('dock_yaw', -1.5708)
-        # 마커면에서 최종 도킹 자세까지 [m]
-        p('dock_distance', 0.224)
-        # 후진 도킹: 정렬은 도크를 마주 본 채로 하고, 회전점에서 180도 돌아
-        # 뒤로 들어갑니다. 충전 내내 카메라가 벽이 아니라 방을 보게 하려는
-        # 것입니다 — 벽 0.3 m 앞에서는 시각 오도메트리가 깨집니다.
+        p('dock_distance', 0.254)         # marker face -> docked pose [m]
+        # Reverse docking keeps the camera facing the room while charging;
+        # visual odometry breaks down 0.3 m from a wall.
         p('reverse_dock', True)
-        # 180도 회전 지점까지의 거리 [m]. 제약은 섀시가 아니라 **캐스터**
-        # 입니다 — 회전 반지름 0.198 m 에 구 반지름이 0.030 m 뿐이라
-        # 높이 0.040 m 인 동판 턱에 걸립니다. docking.yaml 주석 참고.
+        # 180 deg turn point [m]. Limited by the casters, not the chassis --
+        # see docking.yaml for the derivation.
         p('rotate_distance', 0.60)
-        # 회전점 허용 오차 [m]. 이 안에 들면 더 보정하지 않습니다.
         p('rotate_tolerance', 0.02)
 
-        # --- 후진 구간을 뒤쪽 라이다로 닫습니다 ---
-        # 180도 회전 뒤에는 마커가 등 뒤라 보이지 않아, 후진이 오도메트리
-        # 개루프가 됩니다. 회전 중 생긴 밀림까지 그대로 최종 세로 오차로
-        # 남습니다. 라이다는 360도라 뒤쪽 빔이 이미 있고, 스캔 평면이 도크
-        # 패널보다 높아 그 너머 벽을 직접 봅니다.
+        # --- Close the reverse leg with the rear lidar ---
+        # After the turn the markers are behind the robot, so the reverse
+        # would be open loop. The 360 deg lidar scans above the dock panel and
+        # sees the wall beyond it.
         p('use_rear_lidar', True)
-        # 도킹 완료 시 뒤쪽 라이다가 읽어야 할 거리 [m].
-        #   벽 안쪽면 -3.95 / 도킹 시 로봇 중심 -3.64 / 라이다는 중심에서
-        #   전방 0.15 인데 회전 후엔 그 방향이 벽 반대쪽이므로
-        #   (-3.64 + 0.15) - (-3.95) = 0.46
-        # **도크나 로봇 기하를 바꾸면 이 값도 다시 계산해야 합니다.**
-        # `dock_distance` 와 반드시 함께 움직입니다 — 둘이 어긋나면 폐루프
-        # 후진과 개루프 예비 경로가 서로 다른 지점에서 멈춥니다.
+        # Rear range at the docked pose [m]. Moves together with
+        # dock_distance; if they disagree the closed loop and the open-loop
+        # fallback stop at different points.
         p('rear_target', 0.46)
-        # 정후방에서 이 각도 안의 빔만 씁니다 [rad]. 각 빔을 후진 축으로
-        # 투영하므로 창이 넓어도 편향은 없지만, 좁게 두어 벽이 아닌 것이
-        # 섞이는 것을 막습니다.
-        p('rear_window', 0.0873)          # ±5도
+        # Only beams within this angle of straight back [rad]. Each is
+        # projected onto the reverse axis, so a wider window adds no bias.
+        p('rear_window', 0.0873)          # +-5 deg
         p('rear_tolerance', 0.005)
         p('rear_min_beams', 5)
         p('rear_timeout', 30.0)
-        # 마커면에서 정렬 지점까지 [m]
-        p('approach_distance', 0.65)
-        # 마커면에서 **Nav2 복귀 목표**까지 [m]. 정렬 지점과 분리되어 있습니다.
-        #
-        # Nav2 는 여기까지만 데려오고, 그 뒤 정렬·접근은 마커를 보며
-        # staged_dock 이 합니다. 정렬 지점(0.65)을 그대로 Nav2 목표로 쓰면
-        # 코스트맵 팽창(0.40 m)이 칠해 놓은 벽 앞 영역 안이라 경로가 잘 안
-        # 나오고, 나오더라도 도크에 바짝 붙어 멈춥니다.
-        # 검출 정확도가 떨어지기 전(1.29 m 에서 도크 yaw 오차 2.31도)이면서
-        # 팽창 영역 밖인 구간을 고릅니다.
+        p('approach_distance', 0.65)      # marker face -> alignment point [m]
+        # Marker face -> Nav2 staging goal [m]. Kept apart from the alignment
+        # point: costmap inflation (0.40 m) covers the area in front of the
+        # wall, so aiming Nav2 at 0.65 m stops the robot right against the
+        # dock. Far enough out to clear inflation, close enough that marker
+        # accuracy still holds.
         p('staging_distance', 1.05)
-        # 진입점 도착을 좌표로 재확인할 때의 허용치. 액션이 실패를 냈어도
-        # 로봇이 실제로 진입점에 서 있으면 진행합니다 — 이어지는 정렬이
-        # 마커로 다시 재기 때문에 여기서 요구할 정밀도는 "마커가 화각에
-        # 들어오는가" 수준이면 충분합니다.
+        # Tolerance for re-checking staging arrival by pose. The alignment
+        # loop re-measures with the markers, so "markers in view" is enough.
         p('entry_position_tolerance', 0.25)   # [m]
-        p('entry_yaw_tolerance', 0.35)        # [rad] 약 20도
+        p('entry_yaw_tolerance', 0.35)        # [rad] ~20 deg
 
-        # 정렬 판정 — 축별이 아니라 접촉 시점 예상 횡오차 하나로 합니다
-        # (동판 허용 ±34 mm 의 일부를 예산으로 잡음). docking.yaml 참고.
+        # Alignment is judged by one quantity -- predicted lateral error at
+        # contact -- not per axis. See docking.yaml.
         p('contact_lateral_budget', 0.006)
-        # 각도 상한 [rad]. 정밀도가 아니라 측정 이상 감시용입니다.
-        p('yaw_tolerance', 0.0175)        # 1.0도
+        # Yaw ceiling [rad]: a sanity check on the measurement, not precision.
+        p('yaw_tolerance', 0.0175)        # 1.0 deg
         p('max_align_iters', 6)
-        # 마커가 안 보일 때 한 번에 물러나는 거리 [m]
-        p('search_backoff', 0.15)
-        # 정렬에 필요한 도크와의 최소 여유 [m]
-        p('min_standoff', 0.62)
+        p('search_backoff', 0.15)         # back off per marker-search step [m]
+        p('min_standoff', 0.62)           # minimum clearance to align [m]
 
-        # 기동 파라미터
-        p('crab_angle', 0.5236)           # 30도
+        # Motion
+        p('crab_angle', 0.5236)           # 30 deg
         p('v_rotate', 0.35)               # [rad/s]
         p('v_forward', 0.08)              # [m/s]
-        # 목표 직전 미세 접근 속도 [m/s] 와 정지 데드밴드 [m].
-        # 둘이 함께 세로 오차의 하한을 정합니다.
-        p('v_creep', 0.01)
-        p('forward_tolerance', 0.0005)
-        p('settle_time', 0.7)             # 정지 후 안정화 대기 [s]
+        # Creep speed and stop deadband together set the floor on
+        # longitudinal error.
+        p('v_creep', 0.01)                # [m/s]
+        p('forward_tolerance', 0.0005)    # [m]
+        p('settle_time', 0.7)             # wait after stopping [s]
         p('measure_samples', 12)
         p('measure_timeout', 5.0)
-        p('undock_distance', 0.5)         # 이탈 주행 거리 [m]
+        p('undock_distance', 0.5)         # [m]
 
-        # 도킹 구간에 멈출 것들 (std_srvs/Empty). 실기에서 카메라 스트림을
-        # 끊는 서비스가 생기면 여기에 이름만 추가하면 됩니다.
+        # Paused for the docking leg (std_srvs/Empty). Add real-hardware
+        # camera stream services here when they exist.
         p('slam_pause_services', ['/rtabmap/pause', '/vodom_tf_relay/pause'])
         p('slam_resume_services', ['/rtabmap/resume', '/vodom_tf_relay/resume'])
 
@@ -151,7 +136,7 @@ class StagedDock(Node):
         self.rear_tol = g('rear_tolerance')
         self.rear_min_beams = int(g('rear_min_beams'))
         self.rear_timeout = g('rear_timeout')
-        # 정렬 뒤 직진해서 멈출 지점 — 후진 도킹이면 회전점입니다.
+        # Where the straight run stops: the turn point when reversing.
         self.stop_at = self.R if self.reverse else self.D
         self.A = g('approach_distance')
         self.S = g('staging_distance')
@@ -185,7 +170,7 @@ class StagedDock(Node):
         self.marker = None
         self.create_subscription(PoseStamped, 'detected_dock_pose',
                                  self._marker, 10, callback_group=self.cb)
-        # 센서 QoS(BEST_EFFORT)로 받습니다 — 발행자가 RELIABLE 이어도 호환됩니다.
+        # Sensor QoS (BEST_EFFORT) is compatible with a RELIABLE publisher.
         self.scan = None
         self.create_subscription(LaserScan, 'scan', self._scan,
                                  qos_profile_sensor_data, callback_group=self.cb)
@@ -300,9 +285,8 @@ class StagedDock(Node):
             err = target - traveled
             if err <= self.fwd_tol:
                 break
-            # 최저 속도가 정지 분해능을 정합니다 — 제어 주기가 0.02 s 이므로
-            # 한 틱에 v_creep * 0.02 만큼 더 갑니다. 세로 오차의 바닥이 여기라
-            # 데드밴드(forward_tolerance)와 함께 정해야 합니다.
+            # Creep speed sets the stop resolution: one 0.02 s tick overshoots
+            # by v_creep * 0.02. Tune it together with forward_tolerance.
             v = max(self.v_creep, min(self.v_fwd, err * 1.0)) * sign
             self._drive(v, 0.0)
             time.sleep(0.02)
@@ -310,12 +294,12 @@ class StagedDock(Node):
         time.sleep(self.settle)
         return True
 
-    # ------------------------------------------------------- 뒤쪽 라이다
+    # --------------------------------------------------------- Rear lidar
     def rear_distance(self):
-        """정후방 벽까지의 수직 거리 [m]. 못 재면 None.
+        """Perpendicular range to the wall straight behind [m], or None.
 
-        각 빔을 후진 축으로 투영(r*cos)해서 창 안의 빔이 비스듬히 맞아
-        길게 나오는 편향을 없앱니다. 중앙값이라 이상치 몇 개는 무시됩니다.
+        Each beam is projected onto the reverse axis (r*cos) so oblique hits
+        do not read long. The median ignores a few outliers.
         """
         s = self.scan
         if s is None:
@@ -333,11 +317,11 @@ class StagedDock(Node):
         return vals[len(vals) // 2]
 
     def backward_to_rear(self, target, expect):
-        """뒤쪽 라이다를 보며 목표 거리까지 후진합니다.
+        """Reverse until the rear lidar reads the target range.
 
-        expect 는 오도메트리로 예상한 후진량입니다. 라이다가 엉뚱한 것을
-        보고 있을 때 도크로 밀고 들어가지 않도록, 이동량이 예상의 1.5배를
-        넘으면 중단하는 안전장치로만 씁니다.
+        `expect` is the odometry estimate of the distance, used only as a
+        guard: travelling past 1.5x it aborts, so a bad lidar reading cannot
+        push the robot into the dock.
         """
         d0 = self.rear_distance()
         if d0 is None:
@@ -391,8 +375,7 @@ class StagedDock(Node):
             handle.publish_feedback(fb)
 
         goal = handle.request
-        # 도크 좌표는 매 시도마다 다시 읽습니다 — dock_register 가 런타임에
-        # 갱신할 수 있으므로 __init__ 때 읽은 값을 그대로 쓰면 안 됩니다.
+        # Re-read: dock_register can update these at runtime.
         self.dock_pose = (self.get_parameter('dock_x').value,
                           self.get_parameter('dock_y').value,
                           self.get_parameter('dock_yaw').value)
@@ -409,18 +392,16 @@ class StagedDock(Node):
                 handle.abort()
                 return r
 
-        # Nav2 의 각도를 믿으면 안 됩니다. 언도킹 직후에는 로봇이 이미 진입점
-        # 0.1 m 안에 있어 위치 조건만으로 목표가 즉시 성공 처리되고, 도크를
-        # 등진 채로 정렬이 시작돼 마커를 한 장도 못 봅니다. 여기서 지도
-        # 기준 방위를 직접 확인하고 오도메트리로 돌려 세웁니다.
+        # Do not trust Nav2's final heading: right after undocking the robot
+        # is already within 0.1 m of the goal, so it succeeds on position
+        # alone and alignment would start facing away from the dock.
         self._face_dock()
         self._restore_standoff()
 
-        # 여기서부터 지도 갱신과 시각 오도메트리 보정을 얼립니다.
-        # 카메라가 벽을 0.3~0.9 m 앞에서 보며 제자리 회전과 크랩을 반복하는
-        # 구간이라 시각 오도메트리가 깨지고, 그 오차가 포즈 그래프에 그대로
-        # 들어가 지도를 망칩니다. 도킹은 odom 기준이고 이동량도 1 m 미만이라
-        # 이 구간은 휠+IMU 로 충분합니다.
+        # Freeze mapping and visual odometry corrections from here. The
+        # camera stares at a wall 0.3-0.9 m away through repeated spins and
+        # crabs, which corrupts the pose graph. Docking works in odom and
+        # moves under 1 m, so wheels + IMU are enough.
         self._freeze_slam(True)
 
         # Stages 2-4: Measure -> Align yaw -> Crab correction -> Remeasure
@@ -434,10 +415,9 @@ class StagedDock(Node):
                 return r
             m = self.measure()
             if m is None:
-                # 지도 좌표로 "충분히 멀다"고 판단하면 안 됩니다 — SLAM 오차가
-                # 수십 cm 면 실제로는 검출 절벽(0.55 m) 안쪽에 서 있을 수
-                # 있습니다. 도크를 마주 본 상태이므로 뒤로 물러나면 마커가
-                # 화각에 다시 들어옵니다.
+                # SLAM error can be tens of cm, so map coordinates cannot
+                # tell us we are outside the detection cliff. Backing off
+                # brings the markers into view either way.
                 self.get_logger().warning(
                     '마커 미검출 (%d회) — %.2f m 물러나 다시 봅니다'
                     % (i + 1, self.search_back))
@@ -468,7 +448,7 @@ class StagedDock(Node):
         if aligned is None:
             r.success, r.error_code = False, DockRobot.Result.FAILED_TO_DETECT_DOCK
             r.error_msg = 'Dock detection failed during alignment'
-            self._freeze_slam(False)     # 실패해도 반드시 되돌립니다
+            self._freeze_slam(False)     # always restore, even on failure
             handle.abort()
             return r
 
@@ -506,11 +486,9 @@ class StagedDock(Node):
             self.forward(run)
 
         if self.reverse:
-            # 회전점을 마커로 닫습니다. rotate_distance 는 검출 절벽(로봇
-            # 중심 0.516 m) 위라 여기서도 마커가 보이고 거리 정확도가
-            # ±1.4 mm 입니다. 회전 중 캐스터(스윕 반지름 0.198 m, 구 반지름
-            # 0.030 m)가 높이 0.040 m 인 동판 턱을 넘지 못하므로 회전점이
-            # 흔들리면 걸립니다.
+            # Close the turn point on the markers: rotate_distance sits above
+            # the detection cliff, so they are still visible here. The casters
+            # cannot climb the contact plate, so a drifting turn point snags.
             here = None
             for _ in range(3):
                 m = self.measure()
@@ -529,16 +507,15 @@ class StagedDock(Node):
                 self.get_logger().warning(
                     '회전점에서 마커 미검출 — 오도메트리 값 %.3f m 로 진행합니다'
                     % here)
-            # **후진량은 고정값이 아니라 방금 잰 거리에서 뺍니다.** 회전 뒤에는
-            # 마커가 뒤에 있어 보정할 수 없으므로, 여기서 남은 오차를 그대로
-            # 후진량에 반영해야 도크까지 옮겨가지 않습니다.
+            # Reverse distance comes from the range just measured, not a
+            # constant -- after the turn the markers are behind and cannot
+            # correct anything, so residual error must be absorbed here.
             back = max(0.0, here - self.D)
             self.get_logger().info(
                 '회전점 %.3f m — 180도 회전 후 %.3f m 후진합니다' % (here, back))
             self.rotate(math.pi)
-            # 회전이 끝나야 뒤쪽 빔이 도크를 향합니다. 여기서부터는 마커를
-            # 못 보므로, 오도메트리 대신 라이다로 목표 거리까지 닫습니다.
-            # 이렇게 하면 회전 중 생긴 밀림도 함께 흡수됩니다.
+            # Only after the turn do the rear beams face the dock. Closing on
+            # lidar instead of odometry also absorbs drift from the turn.
             done = False
             if self.use_rear and back > 0.001:
                 done = self.backward_to_rear(self.rear_target, back)
@@ -555,10 +532,10 @@ class StagedDock(Node):
 
     def _do_undock(self, handle):
         r = UndockRobot.Result()
-        # 도킹 때 얼렸더라도 auto_dock 의 절전 해제가 먼저 풀어 놓았을 수 있어
-        # 여기서 다시 겁니다. 후진 구간도 카메라가 벽을 보고 있습니다.
+        # Re-freeze: auto_dock's power-save release may have resumed these.
+        # The camera still faces the wall through the undock leg.
         self._freeze_slam(True)
-        # 후진 도킹이면 로봇이 이미 벽을 등지고 있으므로 전진이 이탈입니다.
+        # When reversed the robot already faces away, so forward is out.
         out = self.undock_d if self.reverse else -self.undock_d
         self.get_logger().info(
             '언도킹 — %s %.2f m' % ('전진' if out > 0 else '후진', abs(out)))
@@ -571,15 +548,14 @@ class StagedDock(Node):
         return r
 
     def _restore_standoff(self):
-        """정렬 지점(approach_distance)까지 거리를 맞춥니다.
+        """Move to the alignment standoff (approach_distance).
 
-        Nav2 복귀 목표는 코스트맵 팽창을 피해 더 뒤(`staging_distance`)에
-        있으므로 보통은 앞으로 당깁니다. 반대로 앞선 시도가 실패해 도크 앞에
-        박힌 채 남았으면 물러섭니다 — 마커 3장이 다 보이는 한계가 0.55 m
-        부근이라 너무 붙으면 검출 자체를 못 합니다.
+        Usually pulls forward, since staging sits further back to clear
+        costmap inflation. Backs off instead when a failed attempt left the
+        robot inside the detection cliff.
 
-        지도 좌표로 재므로 SLAM 오차가 섞입니다. 그래서 도크 쪽으로는
-        `safety` 만큼 덜 가고, 남은 차이는 마커로 재는 정렬 루프가 없앱니다.
+        Measured in map coordinates, so it carries SLAM error: stop `safety`
+        short of the dock and let the marker-based alignment loop finish.
         """
         safety = 0.05
         try:
@@ -606,7 +582,7 @@ class StagedDock(Node):
         self.forward(-back)
 
     def _face_dock(self):
-        """도크를 마주 보도록 제자리에서 돌립니다 (지도 기준 방위 사용)."""
+        """Turn in place to face the dock, using the map heading."""
         want = self.dock_pose[2]
         for _ in range(3):
             try:
@@ -625,9 +601,9 @@ class StagedDock(Node):
         self.get_logger().warning('map->base 조회 실패 — 방위 보정을 건너뜁니다')
         return False
 
-    # ------------------------------------------------------------ 지도 동결
+    # --------------------------------------------------------- Map freeze
     def _freeze_slam(self, on):
-        """도킹 구간 동안 포즈 그래프와 시각 오도메트리 보정을 멈춥니다."""
+        """Stop pose-graph updates and visual odometry corrections."""
         for name in (self.slam_pause if on else self.slam_resume):
             cli = self.create_client(Empty, name)
             if not cli.wait_for_service(timeout_sec=2.0):
@@ -640,7 +616,7 @@ class StagedDock(Node):
         self.get_logger().info('SLAM %s' % ('동결' if on else '재개'))
 
     def _goto_entry(self):
-        """Nav2 로 복귀 목표까지 갑니다 (정렬 지점보다 뒤입니다)."""
+        """Drive to the Nav2 staging goal, which sits behind the alignment point."""
         dx, dy, dyaw = self.dock_pose
         back = self.S - self.D
         ex = dx - back * math.cos(dyaw)
@@ -678,13 +654,13 @@ class StagedDock(Node):
         if res is not None and res.status == GoalStatus.STATUS_SUCCEEDED:
             return True
 
-        # 액션 상태만 믿으면 안 됩니다. 목표가 선점되면 이 핸들은 ABORTED 를
-        # 받는데, 정작 로봇은 뒤이은 목표를 따라 진입점에 도착해 있습니다.
-        # 도착 여부는 물리적 사실이므로 좌표로 다시 확인합니다.
+        # A preempted goal reports ABORTED on this handle even though the
+        # robot reached staging on the goal that replaced it. Arrival is a
+        # physical fact, so check it by pose.
         return self._at_entry(ex, ey, dyaw)
 
     def _at_entry(self, ex, ey, dyaw):
-        """진입점에 실제로 서 있는지 지도 좌표로 확인합니다."""
+        """Check by map pose whether the robot is actually at the staging point."""
         try:
             tf = self.buf.lookup_transform(
                 self.map_frame, self.base, rclpy.time.Time()).transform
@@ -718,10 +694,10 @@ def _stamp0(msg):
 
 
 def _rot_pitch(q, pitch):
-    """마커 자세에 y축 회전을 곱합니다: q (x) q_pitch.
+    """Multiply the marker pose by a y-axis rotation: q (x) q_pitch.
 
-    마커 광학 규약(z 가 마커 밖)에서 도크 규약(x 가 도크 정면)으로 옮기는
-    변환이라, 축을 틀리면 yaw 에 90도가 통째로 섞여 들어갑니다.
+    Converts the marker optical convention (z out of the marker) to the dock
+    convention (x out of the dock face); a wrong axis folds 90 deg into yaw.
     """
     ey, ew = math.sin(pitch / 2.0), math.cos(pitch / 2.0)
     return Quaternion(

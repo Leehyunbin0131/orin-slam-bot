@@ -1,36 +1,27 @@
 #!/usr/bin/env python3
-"""좁은 통로가 지배적인 미로 월드를 만든다.
+"""Maze world dominated by narrow corridors.
 
-    python3 generate_maze.py > maze.sdf        (요약은 stderr 로 나갑니다)
+    python3 generate_maze.py > maze.sdf        (summary goes to stderr)
 
-왜 별도 월드인가
-================
-`room.sdf` 는 개활지가 대부분이라 탐사 한 판(158초)에서 좁은 구간을 거의
-밟지 않습니다. 좁은 공간 거동을 고치려면 그 구간을 계속 밟는 월드가
-필요합니다. **`room.sdf` 를 대체하지 않습니다** — 기준선 수치가 전부 거기서
-나왔으므로 회귀 비교용으로 남겨야 합니다.
+room.sdf is mostly open, so one exploration run barely touches tight spaces.
+This world exercises them every run. It does not replace room.sdf, which
+remains the regression baseline.
 
-설계 근거
-=========
-- **통로 폭 0.75 m.** 실측 최소 통과 폭이 0.70 m 인데(제자리 회전 기준),
-  0.70 으로 두면 격자 이산화 때문에 간헐적으로 경로가 끊기므로 한 셀만큼
-  여유를 둡니다.
-- **막다른 곳 3개의 입구만 0.55 / 0.60 / 0.70 으로 좁힙니다.** 음성 시험용
-  입니다. 본선을 좁히면 매 판 로봇이 갇혀 측정이 "그날의 끼임 정도"를
-  재게 됩니다 (tools/README.md 주의사항 3번). 좁힌 곳은 전부 주머니라
-  나머지 도달성에 영향이 없습니다.
-- **완전 미로가 아니라 땋은(braided) 미로입니다.** 막다른 곳 일부를 터서
-  고리를 만듭니다. 고리가 없으면 RTAB-Map 이 서로 다른 방향에서 같은
-  장소를 볼 기회가 없어 루프 클로저가 사실상 안 걸립니다.
-- **벽 조각마다 고유 텍스처** (`maze_XXX.png`). 재사용하면 서로 다른
-  장소를 같은 곳으로 오인해 자세가 수 미터 튑니다 (실측 기록 있음).
-  텍스처는 `models/room_materials/generate_textures.py maze` 로 만듭니다 —
-  방 텍스처와 시드를 분리해 두었으므로 기존 월드는 바뀌지 않습니다.
-- 도크는 넣지 않습니다. 이 월드는 주행/탐사 시험용이므로 `dock:=false`
-  로 띄우세요.
+Design notes:
+  - 0.75 m corridors: the measured minimum is 0.70 m (turning in place), and
+    one extra cell keeps grid discretisation from breaking paths.
+  - Only three dead-end mouths are narrowed to 0.55/0.60/0.70 as negative
+    tests; narrowing the main route would make every run measure how stuck
+    the robot got that day.
+  - Braided, not perfect: some dead ends are opened into loops, without which
+    RTAB-Map never sees a place from two directions and loop closure fails.
+  - Unique texture per wall piece (maze_XXX.png); reuse makes distinct places
+    look identical and jumps the pose by metres. Generate them with
+    models/room_materials/generate_textures.py maze.
+  - No dock: run this world with dock:=false.
 
-재현성: 시드를 고정했으므로 같은 미로가 매번 나옵니다. 시드를 바꾸면
-텍스처 개수도 달라질 수 있으니 stderr 의 요약을 확인하세요.
+The seed is fixed, so the maze is reproducible. Changing it can change the
+texture count -- check the stderr summary.
 """
 
 import sys
@@ -40,17 +31,17 @@ import numpy as np
 TEX = 'model://room_materials/materials/textures'
 
 SEED = 20260803
-N = 7                  # 셀 격자 N x N
-# 통로 폭 [m]. 첫 인자로 덮어쓸 수 있습니다:
+N = 7                  # N x N cell grid
+# Corridor width [m], overridable by the first argument:
 #     python3 generate_maze.py 0.90 > maze90.sdf
-# 시드가 같으면 미로 형상(어느 벽이 뚫렸는지)은 그대로이고 간격만 바뀌므로,
-# **폭만 바꾼 대조 실험**이 됩니다.
+# With the same seed the maze shape is unchanged and only the spacing
+# differs, giving a controlled width-only comparison.
 CORRIDOR = float(sys.argv[1]) if len(sys.argv) > 1 else 0.75
 WALL_T = 0.10
 WALL_H = 1.2
 PITCH = CORRIDOR + WALL_T
-BRAID = 0.30           # 막다른 곳 중 이 비율만큼 터서 고리를 만듭니다
-NARROW = (0.55, 0.60, 0.70)   # 주머니 입구 폭 (음성 시험용)
+BRAID = 0.30           # fraction of dead ends opened into loops
+NARROW = (0.55, 0.60, 0.70)   # pocket mouth widths (negative tests)
 
 rng = np.random.default_rng(SEED)
 _tex = 0
@@ -72,7 +63,7 @@ def cx(i):
 
 
 def slab(name, x, y, sx, sy, texture):
-    """바닥에 세운 벽 조각 하나 (시각 + 충돌)."""
+    """One wall piece standing on the floor (visual + collision)."""
     w('    <model name="%s">' % name)
     w('      <static>true</static>')
     w('      <pose>%.4f %.4f %.4f 0 0 0</pose>' % (x, y, WALL_H / 2.0))
@@ -96,9 +87,9 @@ def slab(name, x, y, sx, sy, texture):
     w('    </model>')
 
 
-# ---------------------------------------------------------------- 미로 생성
-# vw[i][j] : 셀 (i-1,j) 와 (i,j) 사이의 세로벽. i = 0..N (양끝은 외벽)
-# hw[i][j] : 셀 (i,j-1) 과 (i,j) 사이의 가로벽. j = 0..N
+# ------------------------------------------------------- Maze generation
+# vw[i][j]: vertical wall between cells (i-1,j) and (i,j); i = 0..N
+# hw[i][j]: horizontal wall between cells (i,j-1) and (i,j); j = 0..N
 vw = [[True] * N for _ in range(N + 1)]
 hw = [[True] * (N + 1) for _ in range(N)]
 
@@ -141,7 +132,7 @@ def openings(i, j):
     return o
 
 
-# 땋기 — 막다른 곳 일부를 터서 고리를 만듭니다 (루프 클로저용).
+# Braid: open some dead ends into loops so loop closure has a chance.
 dead = [(i, j) for i in range(N) for j in range(N) if len(openings(i, j)) == 1]
 for i, j in dead:
     if rng.random() > BRAID:
@@ -163,7 +154,7 @@ for i, j in dead:
     else:
         hw[a][b] = False
 
-# 남은 막다른 곳 중 3개를 골라 입구를 좁힙니다 (음성 시험).
+# Narrow three remaining dead-end mouths as negative tests.
 dead = [(i, j) for i in range(N) for j in range(N) if len(openings(i, j)) == 1]
 narrow = {}
 for k, gap in enumerate(NARROW):
@@ -172,9 +163,9 @@ for k, gap in enumerate(NARROW):
     i, j = dead[k]
     narrow[openings(i, j)[0]] = (gap, (i, j))
 
-# ---------------------------------------------------------------- SDF 출력
+# ------------------------------------------------------------ SDF output
 w('<?xml version="1.0" ?>')
-w('<!-- generate_maze.py 로 생성됨. 직접 수정하지 말고 생성기를 고치세요. -->')
+w('<!-- Generated by generate_maze.py. Edit the generator, not this file. -->')
 w('<sdf version="1.9">')
 w('  <world name="maze">')
 w("""
@@ -189,7 +180,7 @@ w("""
             name="gz::sim::systems::UserCommands"/>
     <plugin filename="gz-sim-scene-broadcaster-system"
             name="gz::sim::systems::SceneBroadcaster"/>
-    <!-- 카메라/뎁스 렌더링에 필요 -->
+    <!-- Required for camera/depth rendering -->
     <plugin filename="gz-sim-sensors-system"
             name="gz::sim::systems::Sensors">
       <render_engine>ogre2</render_engine>
@@ -233,7 +224,7 @@ w("""
     </model>
 """)
 
-# 바닥 타일 — 윗면이 정확히 z=0 이라야 ground_plane 과 z-파이팅이 안 납니다.
+# Floor tiles: the top must be exactly z=0 or it z-fights with ground_plane.
 span = N * PITCH / 2.0 + WALL_T
 w('    <model name="floor">')
 w('      <static>true</static>')
@@ -249,7 +240,7 @@ w('    </model>')
 
 n_full = n_narrow = 0
 
-# 세로벽: x = cx(i) - PITCH/2, 셀 j 구간을 덮습니다.
+# Vertical walls at x = cx(i) - PITCH/2, spanning cell j.
 for i in range(N + 1):
     for j in range(N):
         x = cx(i) - PITCH / 2.0
@@ -265,7 +256,7 @@ for i in range(N + 1):
                      x, y + s * (PITCH - stub) / 2.0, WALL_T, sy, next_tex())
             n_narrow += 1
 
-# 가로벽: y = cx(j) - PITCH/2
+# Horizontal walls at y = cx(j) - PITCH/2
 for i in range(N):
     for j in range(N + 1):
         x = cx(i)
@@ -284,15 +275,15 @@ for i in range(N):
 w('  </world>')
 w('</sdf>')
 
-# ---------------------------------------------------------------- 요약
+# --------------------------------------------------------------- Summary
 e = sys.stderr.write
-e('미로 %dx%d 셀, 통로 %.2f m, 벽 %.2f m -> 전체 %.2f x %.2f m\n'
+e('maze %dx%d cells, corridor %.2f m, wall %.2f m -> %.2f x %.2f m\n'
   % (N, N, CORRIDOR, WALL_T, 2 * span, 2 * span))
-e('벽 조각 %d 개 (온전 %d + 좁힌 입구 %d 곳의 스텁)\n'
+e('%d wall pieces (%d full + stubs at %d narrowed mouths)\n'
   % (_tex, n_full, n_narrow))
-e('필요 텍스처: maze_000.png ~ maze_%03d.png  (%d 장)\n' % (_tex - 1, _tex))
-e('  -> models/room_materials/generate_textures.py 의 N_MAZE_SEGMENTS 를 %d 이상으로\n' % _tex)
+e('textures needed: maze_000.png ~ maze_%03d.png  (%d)\n' % (_tex - 1, _tex))
+e('  -> set N_MAZE_SEGMENTS >= %d in generate_textures.py\n' % _tex)
 for (kind, a, b), (gap, cell) in narrow.items():
-    e('좁힌 주머니 입구: %s 벽 (%d,%d), 폭 %.2f m, 셀 %s -> 중심 (%.2f, %.2f)\n'
+    e('narrowed mouth: %s wall (%d,%d), width %.2f m, cell %s -> (%.2f, %.2f)\n'
       % (kind, a, b, gap, cell, cx(cell[0]), cx(cell[1])))
-e('로봇 시작 권장: (%.2f, %.2f) = 중앙 셀\n' % (cx(N // 2), cx(N // 2)))
+e('suggested spawn: (%.2f, %.2f) = centre cell\n' % (cx(N // 2), cx(N // 2)))
