@@ -17,7 +17,13 @@ bt_navigator:
     robot_base_frame: base_footprint
     odom_topic: /odom
     bt_loop_duration: 10
-    default_server_timeout: 20
+    # BT 액션 노드가 하위 서버의 **목표 수락 응답**을 기다리는 예산 [ms].
+    # 순정 20 ms 는 너무 빠듯해, planner_server 가 한 주기 늦게 답하면
+    # BT 노드가 그대로 FAILURE 를 내고 주행 목표 전체가 실패합니다
+    # (`nav2_behavior_tree/bt_action_node.hpp:230`). 실패 감지가 늦어질 뿐
+    # 대기 중에도 BT 는 RUNNING 을 반환하며 계속 틱을 돌리므로 막히지
+    # 않습니다.
+    default_server_timeout: 200
     wait_for_service_timeout: 1000
     action_server_result_timeout: 900.0
     navigators: ["navigate_to_pose", "navigate_through_poses"]

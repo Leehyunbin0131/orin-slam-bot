@@ -89,6 +89,7 @@ ROS 2 **Jazzy** + **Gazebo Harmonic** (Ubuntu 24.04). 개발은 시뮬레이션�
   `controller_server → /cmd_vel_nav → velocity_smoother → /cmd_vel_smoothed`
   `수동 조종 → /cmd_vel_teleop`, 두 입력은 `twist_mux` 가 중재해 `/cmd_vel` 로 냅니다.
 - **`progress_checker` 는 8초입니다. 줄이지 마세요** — 3초로 하면 복구가 자리 잡기 전에 다음 복구가 들어와 BT 복구 시간이 21 → 160초가 됩니다.
+- **`bt_navigator` 의 `default_server_timeout` 은 200 ms 입니다** (순정 20 ms). 이것은 BT 액션 노드가 하위 서버의 **목표 수락 응답**을 기다리는 예산이라, 넘기면 그 자리에서 FAILURE 가 나 주행 목표 전체가 실패합니다 (`nav2_behavior_tree/bt_action_node.hpp:230`). 대기 중에도 BT 는 RUNNING 을 반환하며 계속 틱을 돌리므로 늘려도 막히지 않고, 실패 감지만 늦어집니다. **이 증상은 네트워크 인터페이스 개수나 CPU 부하와 무관합니다** — 인터페이스 3개(`lo`/`enp4s0`/`docker0`, `docker0` 은 DOWN), 28코어에 부하 5 인 환경에서도 났습니다.
 
 ## 공간 예산 — 최소 통과 폭 0.70 m
 
@@ -155,6 +156,9 @@ ros2 launch orinbot_navigation explore.launch.py     # 스택이 이미 떠 있�
 - `scripts/nav2_startup_watchdog.py` 가 `is_active` 를 감시하다 실패 시 `manage_nodes` 로 **RESET 후 STARTUP** 을 재요청합니다 (감지 후 2초 내 5개 서버 복구). **RESET 을 먼저 불러야 합니다** — 일부가 active 인 상태에서 STARTUP 만 보내면 "already active" 로 실패합니다. 끄려면 `startup_watchdog:=false`.
 - **워치독에는 `use_sim_time` 을 적용하지 않습니다.** `/clock` 에 의존하면 시뮬레이터가 시계를 내기 전에 대기 상태에 빠져 감시해야 할 구간에 잠들어 있게 됩니다.
 - Orin 실기에서 이 현상이 더 잦은지는 아직 확인하지 못했습니다.
+- **아래 두 가지는 여기에 해당하지 않습니다. 인터페이스 탓으로 돌리지 마세요.**
+  - `Timed out while waiting for action server to acknowledge goal request for ...` → `bt_navigator` 의 `default_server_timeout` 초과입니다 (아래 Nav2 구성 참고).
+  - `Action server is inactive. Rejecting the goal.` → 충전 중 절전으로 Nav2 가 PAUSE 된 정상 상태입니다. 절전은 언도킹으로 풀립니다.
 
 ## EKF (휠 엔코더 + IMU)
 
@@ -242,6 +246,17 @@ ros2 launch orinbot_navigation explore.launch.py     # 스택이 이미 떠 있�
 - **접촉 판정에 SLAM 자세를 쓰지 마세요.** 접촉은 물리적 사실이므로 `battery_sim.py` 는 Gazebo 지상 진실(`/ground_truth/odom`)로 판정합니다. 그 허용치는 `docking_threshold` 보다 **커야** 합니다 — 작으면 "도착했는데 충전이 안 잡히는" 교착이 납니다.
 - **`/world/<world>/dynamic_pose/info` 를 `tf2_msgs/TFMessage` 로 브리지하지 마세요.** 프레임 이름을 담는 `header.data` 가 없어 `frame_id`/`child_frame_id` 가 전부 빈 문자열로 나옵니다. URDF 에 `gz-sim-odometry-publisher-system` 을 붙여 `nav_msgs/Odometry` 로 받으세요. gz 쪽 토픽 이름은 `<odom_topic>` 값 그대로이며 모델 이름으로 네임스페이스가 붙지 않습니다.
 - **자세를 고정할 때 영상 타임스탬프로 TF 를 조회하지 마세요.** 영상이 `odom` TF 보다 먼저 도착해 "extrapolation into the future" 로 매번 실패합니다. **`timeout` 을 줘도 소용없습니다** — 그 콜백이 단일 스레드 실행기를 잡고 있어 TF 리스너 콜백이 그 사이 돌 수 없습니다. 가장 최근 TF(stamp=0)로 조회하세요.
+
+**도크 좌표 자동 등록** (`scripts/dock_register.py`, `dock_register:=true`)
+
+도크에 붙은 채 부팅하면 그 자세를 도크 좌표로 등록합니다. 스테이션을 옮겨도 로봇을 한 번 밀어 넣고 재부팅하면 되고, 좌표를 손으로 읽어 옮길 필요가 없습니다. Nav2 `dock_database` 규격 파일(`~/.ros/orinbot_docks.yaml`)로 쓰고, 도는 `staged_dock` 에는 `SetParameters` 로 바로 반영합니다. 부팅 때가 아니어도 `~/register` 서비스로 부를 수 있습니다.
+
+- **저장하는 것은 "도크 앞"이 아니라 "도킹 완료 자세"입니다.** 진입점은 `staged_dock` 이 `approach_distance` 로 계산하므로, 앞으로 빼서 저장하면 두 번 빠져 진입점이 두 배로 멀어집니다.
+- **후진 도킹이면 yaw 에서 180도를 뺍니다.** `dock_yaw` 는 접근할 때 바라보는 방향인데 후진 도킹의 최종 자세는 도크를 등지고 있어 정반대입니다. 부호를 틀리면 로봇이 도크 반대편에 진입점을 잡고 마커를 한 장도 못 봐서, 증상이 "마커 검출 실패"로만 보입니다. `reverse_dock` 은 `staged_dock` 쪽과 **같아야** 합니다.
+- **등록 좌표는 `map` 기준이고 그 원점은 로봇이 부팅한 자리입니다.** 도크에서 부팅하면 도크가 곧 원점이라 `(0, 0)` 이 나오는 것이 정상입니다.
+- **도킹 여부는 위치 추정이 아니라 충전 전류로 판정합니다.** 다만 **첫 샘플로 판단하면 안 됩니다** — 기동 직후에는 접촉 판정 입력이 아직 없어 방전으로 나오는 구간이 있습니다 (`charge_wait: 20.0`).
+- **등록 대기는 실행기를 블록하므로 `MultiThreadedExecutor` + `ReentrantCallbackGroup` 이어야 합니다.** 단일 스레드로 두면 그 대기 동안 TF 콜백과 서비스 응답이 못 돌아, 안정화 판정이 갱신 없는 버퍼에서 같은 값만 읽어 무조건 통과하고 파라미터 반영은 성공했는데도 실패로 보고됩니다.
+- **`scripts/*.py` 에 실행 권한이 없으면** 런치가 `executable not found` 로 **스택 전체를 중단**시킵니다. 새 스크립트를 추가하면 `chmod +x` 를 확인하세요.
 
 **충전 중 절전** (`auto_dock.py`, `power_save: true`)
 

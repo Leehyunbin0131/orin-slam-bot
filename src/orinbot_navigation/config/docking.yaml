@@ -277,3 +277,36 @@ auto_dock:
     # 돌아갑니다 — 그래서 시뮬 측정치로 실기 절감량을 추정할 수 없습니다.
     extra_pause_services: ['/dock_marker_board/pause']
     extra_resume_services: ['/dock_marker_board/resume']
+
+# ---------------------------------------------------------------------------
+# 도크 좌표 자동 등록 (scripts/dock_register.py).
+#
+# 도크에 붙은 채 부팅하면 그 자세를 도크 좌표로 등록합니다. 스테이션을 옮겨도
+# 로봇을 한 번 밀어 넣고 재부팅하면 되고, 좌표를 손으로 읽어 옮길 필요가
+# 없습니다. 청소로봇이 "충전 중에 매핑을 시작"하는 것과 같은 방식입니다.
+#
+# 저장하는 것은 **도킹 완료 자세**입니다. 진입점은 staged_dock 이
+# approach_distance 로 계산하므로, 앞으로 빼서 저장하면 두 배로 멀어집니다.
+dock_register:
+  ros__parameters:
+    use_sim_time: true
+    dock_id: home_dock
+    dock_type: orinbot_dock
+    # **staged_dock.reverse_dock 과 반드시 같아야 합니다.** 후진 도킹이면
+    # 최종 자세가 접근 방향의 정반대라 yaw 에서 180도를 뺍니다. 부호를
+    # 틀리면 로봇이 도크 반대편으로 진입점을 잡고 마커를 한 장도 못 봅니다.
+    reverse_dock: true
+    # Nav2 dock_database 규격이라 docking_mode:=smooth 로 바꿔도 그대로
+    # 쓸 수 있습니다.
+    database_path: ~/.ros/orinbot_docks.yaml
+    auto_register: true
+    # 접촉은 물리적 사실이므로 위치 추정이 아니라 충전 전류로 판정합니다.
+    charge_threshold: 0.5
+    # 기동 직후에는 접촉 판정 입력이 아직 안 들어와 방전으로 나오는 구간이
+    # 있습니다. 첫 샘플만 보고 포기하지 않도록 이만큼 기다립니다.
+    charge_wait: 20.0
+    settle_tolerance: 0.01
+    settle_tolerance_yaw: 0.0087
+    settle_samples: 10
+    settle_timeout: 120.0
+    target_nodes: ['/staged_dock']

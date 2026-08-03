@@ -85,6 +85,12 @@ class StagedDock(Node):
         p('rear_timeout', 30.0)
         # 마커면에서 정렬 지점까지 [m]
         p('approach_distance', 0.65)
+        # 진입점 도착을 좌표로 재확인할 때의 허용치. 액션이 실패를 냈어도
+        # 로봇이 실제로 진입점에 서 있으면 진행합니다 — 이어지는 정렬이
+        # 마커로 다시 재기 때문에 여기서 요구할 정밀도는 "마커가 화각에
+        # 들어오는가" 수준이면 충분합니다.
+        p('entry_position_tolerance', 0.25)   # [m]
+        p('entry_yaw_tolerance', 0.35)        # [rad] 약 20도
 
         # 정렬 판정 — 축별이 아니라 접촉 시점 예상 횡오차 하나로 합니다
         # (동판 허용 ±34 mm 의 일부를 예산으로 잡음). docking.yaml 참고.
@@ -137,6 +143,8 @@ class StagedDock(Node):
         # 정렬 뒤 직진해서 멈출 지점 — 후진 도킹이면 회전점입니다.
         self.stop_at = self.R if self.reverse else self.D
         self.A = g('approach_distance')
+        self.entry_pos_tol = g('entry_position_tolerance')
+        self.entry_yaw_tol = g('entry_yaw_tolerance')
         self.yaw_tol = g('yaw_tolerance')
         self.budget = g('contact_lateral_budget')
         self.max_iters = int(g('max_align_iters'))
@@ -369,7 +377,14 @@ class StagedDock(Node):
             handle.publish_feedback(fb)
 
         goal = handle.request
-        self.get_logger().info('Starting staged dock (dock_id=%s)' % goal.dock_id)
+        # 도크 좌표는 매 시도마다 다시 읽습니다 — dock_register 가 런타임에
+        # 갱신할 수 있으므로 __init__ 때 읽은 값을 그대로 쓰면 안 됩니다.
+        self.dock_pose = (self.get_parameter('dock_x').value,
+                          self.get_parameter('dock_y').value,
+                          self.get_parameter('dock_yaw').value)
+        self.get_logger().info(
+            'Starting staged dock (dock_id=%s, dock (%.3f, %.3f, %+.4f))'
+            % (goal.dock_id, *self.dock_pose))
 
         # Stage 1: Move to staging pose
         if goal.navigate_to_staging_pose:
@@ -614,6 +629,10 @@ class StagedDock(Node):
 
         if not self.nav_ac.wait_for_server(timeout_sec=5.0):
             return False
+
+        self.get_logger().info(
+            '진입점 주행 목표 발신 (%.3f, %.3f, %+.1f도)'
+            % (ex, ey, math.degrees(dyaw)))
         fut = self.nav_ac.send_goal_async(g)
         t0 = time.time()
         while not fut.done() and time.time() - t0 < 5.0:
@@ -628,7 +647,28 @@ class StagedDock(Node):
         if not rfut.done():
             return False
         res = rfut.result()
-        return res is not None and res.status == GoalStatus.STATUS_SUCCEEDED
+        if res is not None and res.status == GoalStatus.STATUS_SUCCEEDED:
+            return True
+
+        # 액션 상태만 믿으면 안 됩니다. 목표가 선점되면 이 핸들은 ABORTED 를
+        # 받는데, 정작 로봇은 뒤이은 목표를 따라 진입점에 도착해 있습니다.
+        # 도착 여부는 물리적 사실이므로 좌표로 다시 확인합니다.
+        return self._at_entry(ex, ey, dyaw)
+
+    def _at_entry(self, ex, ey, dyaw):
+        """진입점에 실제로 서 있는지 지도 좌표로 확인합니다."""
+        try:
+            tf = self.buf.lookup_transform(
+                self.map_frame, self.base, rclpy.time.Time()).transform
+        except Exception:                                  # noqa: BLE001
+            return False
+        d = math.hypot(tf.translation.x - ex, tf.translation.y - ey)
+        dyawe = abs(wrap(yaw_of(tf.rotation) - dyaw))
+        ok = d <= self.entry_pos_tol and dyawe <= self.entry_yaw_tol
+        self.get_logger().info(
+            '진입점 주행이 실패로 끝났지만 실제 위치는 %.3f m / %+.1f도 차이 — %s'
+            % (d, math.degrees(dyawe), '진행합니다' if ok else '중단합니다'))
+        return ok
 
     def _odom_pose(self):
         try:
