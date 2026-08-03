@@ -22,15 +22,18 @@ ros2 launch orinbot_navigation navigation.launch.py
 - [로봇 사양](#로봇-사양)
 - [패키지 구성](#패키지-구성)
 - [설치](#설치) · [빌드](#빌드)
-- **[실행 구성 3가지](#실행-구성-3가지)** — PC 단독 / 분산(PC+Orin) / 실기 단독
-- [실행](#실행) — 시뮬레이터 단독, 월드, 조종, 예제
+- **[실행](#실행)** — **여기부터 보십시오**
+  - [한눈에 보기](#한눈에-보기) — 무엇을 하려면 어떤 명령인가
+  - [임무 모드](#임무-모드--주-진입점) — 도크 대기 → 명령 → 수행 → 복귀
+  - [배치 3가지](#배치-3가지--무엇이-어느-기계에서-도는가) — PC 단독 / 분산(PC+Orin) / 실기 단독
+- [시뮬레이터 · 월드 · 예제](#시뮬레이터--월드--예제)
   - [시뮬레이션 실행](#시뮬레이션-실행)
   - [제공 월드](#제공-월드)
   - [모델 확인 및 키보드 원격 조종](#모델-확인-및-키보드-원격-조종)
   - [예제 노드](#예제-노드)
 - [인터페이스](#인터페이스) — 토픽·액션 목록, [TF 구조](#tf-구조)
 - [실물 로봇 전환 가이드](#실물-로봇-전환-가이드)
-- **[자율주행 (VSLAM + Nav2)](#자율주행-vslam--nav2)** — **주 진입점**
+- [자율주행 (VSLAM + Nav2)](#자율주행-vslam--nav2) — 인자와 점검
   - [실행 옵션](#실행-옵션)
   - [주요 실행 인자](#주요-실행-인자)
   - [런타임 필수 점검](#런타임-필수-점검)
@@ -118,34 +121,102 @@ colcon build --symlink-install
 source install/setup.bash
 ```
 
-## 실행 구성 3가지
+## 실행
 
-같은 코드를 세 가지 배치로 실행할 수 있습니다. **무엇이 어느 기계에서 도는지**가 다릅니다.
+### 한눈에 보기
+
+모든 명령은 아래를 먼저 실행한 터미널에서 씁니다.
+
+```bash
+cd ~/ros2_ws
+source /opt/ros/jazzy/setup.bash && source install/setup.bash
+export ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST     # PC 한 대에서 돌릴 때
+```
+
+| 하고 싶은 것 | 명령 |
+|---|---|
+| **임무를 시켜 본다 (기본)** | `ros2 launch orinbot_navigation mission.launch.py` |
+| 자율주행 스택만 (임무 관리자 없이) | `ros2 launch orinbot_navigation navigation.launch.py` |
+| 시뮬레이터만 (월드·센서 확인) | `ros2 launch orinbot_bringup sim.launch.py` |
+| URDF만 (Gazebo 없이) | `ros2 launch orinbot_description display.launch.py` |
+
+새 기능이나 임무를 시험할 때는 **`mission.launch.py` 하나만 띄우고, 다른 터미널에서 명령을 보냅니다.**
+
+---
+
+### 임무 모드 — 주 진입점
+
+로봇청소기와 같은 사이클입니다. 도크에서 시작해 임무가 없으면 계속 충전하며 대기하고, 명령을 받으면 절전을 풀고 나갔다가 끝나면 스스로 복귀합니다.
+
+```
+도크 대기 ─► 명령 수신 ─► 절전 해제 ─► 언도킹 ─► 임무 수행 ─► 복귀 ─► 도크 대기
+```
+
+**터미널 1 — 스택 기동** (로봇이 도크에 세워진 채 뜹니다)
+
+```bash
+rm -f ~/.ros/orinbot_rtabmap.db ~/.ros/orinbot_docks.yaml   # 지도·도크좌표 초기화
+ros2 launch orinbot_navigation mission.launch.py
+```
+
+아래 두 줄이 보이면 준비 완료입니다 (약 40초).
+
+```
+[auto_dock]: 충전이 감지되어 도크 대기 상태로 들어갑니다
+[mission]:   임무 상태 → DOCKED
+```
+
+**터미널 2 — 임무 명령**
+
+```bash
+ros2 service call /mission/start_mapping std_srvs/srv/Trigger   # 자동 매핑 시작
+ros2 service call /mission/cancel        std_srvs/srv/Trigger   # 중단하고 복귀
+```
+
+**터미널 3 — 관찰** (선택)
+
+```bash
+ros2 topic echo /mission/state                                  # 임무 진행 상황
+ros2 topic echo /dock_state                                     # 도크 상태
+ros2 topic echo /battery_state | grep current                   # 양수면 충전 중
+```
+
+`/mission/state` 는 이 순서로 바뀝니다.
+
+```
+DOCKED → WAKING → UNDOCKING → RUNNING:mapping → RETURNING → DOCKED
+```
+
+임무 중 배터리가 떨어지면 `SUSPENDED:mapping` 으로 잠시 멈추고, 충전이 끝나면 **이어서** 합니다.
+
+> **`DOCKED` 를 기다린 뒤에 임무 명령을 넣으세요.** 그 전에 넣으면 도크 상태 판정이 안 끝난 채로 순서가 꼬입니다. 복귀 명령도 언도킹이 끝난 뒤에 넣어야 합니다 — `RETURNING`/`UNDOCKING` 중에는 `이미 ... 중입니다` 로 거절됩니다.
+
+**도킹만 따로 돌려볼 때**는 임무 관리자를 건너뛰고 `auto_dock` 을 직접 부릅니다.
+
+```bash
+ros2 service call /auto_dock/leave  std_srvs/srv/Trigger   # 절전 해제 + 언도킹
+ros2 service call /auto_dock/return std_srvs/srv/Trigger   # 도크로 복귀
+```
+
+임무를 추가하는 자리는 `mission_manager.py` 의 `MISSIONS` 한 곳입니다. 항목과 실행 함수만 더하면 서비스가 자동으로 생기고, 깨우기·언도킹·복귀는 공통 절차라 다시 쓸 필요가 없습니다.
+
+**다시 띄우기 전에** 잔여 프로세스를 확인하십시오 — 남아 있으면 `/clock` 이 두 곳에서 발행되어 모든 노드의 TF 조회가 깨집니다. 확인과 정리 방법은 [런타임 필수 점검](#런타임-필수-점검)에 있습니다.
+
+기동 중 `Nav2 PAUSE failed` 나 `bt_navigator: unconfigured` 가 보이면 라이프사이클 기동이 실패한 것이니 그 회차는 버리고 다시 띄우십시오 ([Nav2 라이프사이클 워치독](CLAUDE.md) 참고).
+
+---
+
+### 배치 3가지 — 무엇이 어느 기계에서 도는가
 
 | | 구성 | Gazebo | RViz | 주 연산 | 상태 |
 |---|---|---|---|---|---|
 | **1** | PC 단독 | PC | PC | PC | 검증됨 |
 | **2** | 분산 (PC + Orin) | PC | PC | **Orin** | 검증됨 |
-| **3** | 실기 단독 | 없음 | 없음 | **로봇** | **준비 중** (아래 참고) |
+| **3** | 실기 단독 | 없음 | 없음 | **로봇** | **준비 중** |
 
----
+**구성 1 — PC 한 대에서 전부.** 위 [한눈에 보기](#한눈에-보기)의 명령이 그대로 이 구성입니다. 개발과 회귀 시험의 기본입니다.
 
-### 구성 1 — PC 한 대에서 전부
-
-가장 단순합니다. 개발과 회귀 시험의 기본 구성입니다.
-
-```bash
-source /opt/ros/jazzy/setup.bash && source install/setup.bash
-export ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST
-
-ros2 launch orinbot_navigation navigation.launch.py explore:=true
-```
-
-`navigation.launch.py`가 시뮬레이터·SLAM·Nav2·도킹·RViz를 순서대로 모두 띄웁니다.
-
----
-
-### 구성 2 — 주 연산을 Orin이, 화면은 PC가
+#### 구성 2 — 주 연산을 Orin이, 화면은 PC가
 
 실기 배치에 한 걸음 가까운 구성입니다. **Orin이 VSLAM과 Nav2를 실제로 감당하는지** 확인할 때 씁니다.
 
@@ -197,7 +268,7 @@ ros2 launch orinbot_navigation navigation.launch.py \
 
 ---
 
-### 구성 3 — 실기 단독 (준비 중)
+#### 구성 3 — 실기 단독 (준비 중)
 
 로봇 위에서 Gazebo와 RViz 없이 주 연산만 돌리는 구성입니다. **최종 배치 목표이지만 아직 그대로는 동작하지 않습니다.**
 
@@ -228,12 +299,10 @@ ros2 launch orinbot_navigation navigation.launch.py \
 
 ---
 
-## 실행
+## 시뮬레이터 · 월드 · 예제
 
-이 절은 **시뮬레이터만** 띄우는 방법입니다 — 모델 확인, 월드 점검, 수동 조종용입니다.
-자율주행까지 한 번에 실행하려면 [자율주행 (VSLAM + Nav2)](#자율주행-vslam--nav2) 절의
-`navigation.launch.py`를 사용하십시오. 이 런치 파일이 아래 `sim.launch.py`를 포함하여 SLAM, Nav2, 도킹 노드까지
-순서대로 실행합니다.
+여기는 **시뮬레이터만** 띄우는 방법입니다 — 모델 확인, 월드 점검, 수동 조종용입니다.
+자율주행까지 한 번에 띄우려면 [실행](#실행) 절을 보십시오.
 
 ### 시뮬레이션 실행
 
@@ -361,33 +430,12 @@ map --(rtabmap)--> vodom --(rgbd_odometry)--> odom --(EKF)--> base_footprint
 
 ## 자율주행 (VSLAM + Nav2)
 
-```bash
-ros2 launch orinbot_navigation navigation.launch.py
-```
-
-### 임무 모드 — 도크에서 대기하다 명령을 받아 수행
-
-로봇청소기와 같은 사이클입니다. 도크에서 시작해 임무가 없으면 계속 충전하며 대기하고,
-명령을 받으면 절전을 풀고 나갔다가 끝나면 스스로 복귀합니다.
-
-```bash
-# 터미널 1 — 띄워 두기 (로봇이 도크에 세워진 채 시작합니다)
-ros2 launch orinbot_navigation mission.launch.py
-
-# 터미널 2 — 임무 명령
-ros2 service call /mission/start_mapping std_srvs/srv/Trigger   # 자동 매핑 시작
-ros2 service call /mission/cancel        std_srvs/srv/Trigger   # 중단하고 복귀
-ros2 topic echo /mission/state                                   # 진행 상황
-```
-
-`/mission/state` 는 `DOCKED → WAKING → UNDOCKING → RUNNING:mapping → RETURNING → DOCKED`
-순으로 바뀝니다. 임무 중 배터리가 떨어지면 `SUSPENDED:mapping` 으로 잠시 멈추고
-충전이 끝나면 이어서 합니다.
+실행 방법은 [실행](#실행) 절에 모아 두었습니다. 여기는 **인자와 점검 항목**입니다.
 
 ### 실행 옵션
 
 ```bash
-# 프론티어 자동 탐사 및 지도 생성
+# 프론티어 자동 탐사 및 지도 생성 (임무 관리자 없이 바로 탐사)
 ros2 launch orinbot_navigation navigation.launch.py explore:=true
 
 # 기존 지도 기반 위치 추정 전용 모드
