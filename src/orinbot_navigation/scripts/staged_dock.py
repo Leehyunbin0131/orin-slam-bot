@@ -60,7 +60,7 @@ class StagedDock(Node):
         # 180도 회전 지점까지의 거리 [m]. 제약은 섀시가 아니라 **캐스터**
         # 입니다 — 회전 반지름 0.198 m 에 구 반지름이 0.030 m 뿐이라
         # 높이 0.040 m 인 동판 턱에 걸립니다. docking.yaml 주석 참고.
-        p('rotate_distance', 0.55)
+        p('rotate_distance', 0.60)
         # 회전점 허용 오차 [m]. 이 안에 들면 더 보정하지 않습니다.
         p('rotate_tolerance', 0.02)
 
@@ -71,11 +71,13 @@ class StagedDock(Node):
         # 패널보다 높아 그 너머 벽을 직접 봅니다.
         p('use_rear_lidar', True)
         # 도킹 완료 시 뒤쪽 라이다가 읽어야 할 거리 [m].
-        #   벽 안쪽면 -3.95 / 도킹 시 로봇 중심 -3.67 / 라이다는 중심에서
+        #   벽 안쪽면 -3.95 / 도킹 시 로봇 중심 -3.64 / 라이다는 중심에서
         #   전방 0.15 인데 회전 후엔 그 방향이 벽 반대쪽이므로
-        #   (-3.67 + 0.15) - (-3.95) = 0.43
+        #   (-3.64 + 0.15) - (-3.95) = 0.46
         # **도크나 로봇 기하를 바꾸면 이 값도 다시 계산해야 합니다.**
-        p('rear_target', 0.43)
+        # `dock_distance` 와 반드시 함께 움직입니다 — 둘이 어긋나면 폐루프
+        # 후진과 개루프 예비 경로가 서로 다른 지점에서 멈춥니다.
+        p('rear_target', 0.46)
         # 정후방에서 이 각도 안의 빔만 씁니다 [rad]. 각 빔을 후진 축으로
         # 투영하므로 창이 넓어도 편향은 없지만, 좁게 두어 벽이 아닌 것이
         # 섞이는 것을 막습니다.
@@ -85,6 +87,15 @@ class StagedDock(Node):
         p('rear_timeout', 30.0)
         # 마커면에서 정렬 지점까지 [m]
         p('approach_distance', 0.65)
+        # 마커면에서 **Nav2 복귀 목표**까지 [m]. 정렬 지점과 분리되어 있습니다.
+        #
+        # Nav2 는 여기까지만 데려오고, 그 뒤 정렬·접근은 마커를 보며
+        # staged_dock 이 합니다. 정렬 지점(0.65)을 그대로 Nav2 목표로 쓰면
+        # 코스트맵 팽창(0.40 m)이 칠해 놓은 벽 앞 영역 안이라 경로가 잘 안
+        # 나오고, 나오더라도 도크에 바짝 붙어 멈춥니다.
+        # 검출 정확도가 떨어지기 전(1.29 m 에서 도크 yaw 오차 2.31도)이면서
+        # 팽창 영역 밖인 구간을 고릅니다.
+        p('staging_distance', 1.05)
         # 진입점 도착을 좌표로 재확인할 때의 허용치. 액션이 실패를 냈어도
         # 로봇이 실제로 진입점에 서 있으면 진행합니다 — 이어지는 정렬이
         # 마커로 다시 재기 때문에 여기서 요구할 정밀도는 "마커가 화각에
@@ -143,6 +154,7 @@ class StagedDock(Node):
         # 정렬 뒤 직진해서 멈출 지점 — 후진 도킹이면 회전점입니다.
         self.stop_at = self.R if self.reverse else self.D
         self.A = g('approach_distance')
+        self.S = g('staging_distance')
         self.entry_pos_tol = g('entry_position_tolerance')
         self.entry_yaw_tol = g('entry_yaw_tolerance')
         self.yaw_tol = g('yaw_tolerance')
@@ -197,9 +209,11 @@ class StagedDock(Node):
             callback_group=self.cb)
 
         self.get_logger().info(
-            'Staged dock server started: staging %.2f m, dock %.3f m, '
-            'lateral budget %.0f mm (yaw limit %.1f deg)'
-            % (self.A, self.D, self.budget * 1000, math.degrees(self.yaw_tol)))
+            '단계 도킹 서버 시작 — 복귀 목표 %.2f m / 정렬 %.2f m / '
+            '회전 %.2f m / 도킹 %.3f m (마커면 기준), 접촉 예산 %.0f mm '
+            '(각도 상한 %.1f도)'
+            % (self.S, self.A, self.R, self.D, self.budget * 1000,
+               math.degrees(self.yaw_tol)))
 
     # ---------------- Inputs ----------------
     def _marker(self, msg):
@@ -557,11 +571,17 @@ class StagedDock(Node):
         return r
 
     def _restore_standoff(self):
-        """도크에 너무 붙어 있으면 물러섭니다.
+        """정렬 지점(approach_distance)까지 거리를 맞춥니다.
 
-        마커 3장이 다 보이는 한계가 0.55 m 부근이라, 앞선 시도가 실패해
-        로봇이 도크 앞에 박힌 채 남으면 이후 모든 시도가 검출조차 못 합니다.
+        Nav2 복귀 목표는 코스트맵 팽창을 피해 더 뒤(`staging_distance`)에
+        있으므로 보통은 앞으로 당깁니다. 반대로 앞선 시도가 실패해 도크 앞에
+        박힌 채 남았으면 물러섭니다 — 마커 3장이 다 보이는 한계가 0.55 m
+        부근이라 너무 붙으면 검출 자체를 못 합니다.
+
+        지도 좌표로 재므로 SLAM 오차가 섞입니다. 그래서 도크 쪽으로는
+        `safety` 만큼 덜 가고, 남은 차이는 마커로 재는 정렬 루프가 없앱니다.
         """
+        safety = 0.05
         try:
             t = self.buf.lookup_transform(
                 self.map_frame, self.base, rclpy.time.Time()).transform
@@ -569,9 +589,17 @@ class StagedDock(Node):
             return
         dx, dy, dyaw = self.dock_pose
         d = math.hypot(t.translation.x - dx, t.translation.y - dy) + self.D
-        if d >= self.A:
+        err = d - self.A
+        if abs(err) <= safety:
             return
-        back = self.A - d + 0.05
+        if err > 0:
+            fwd = err - safety
+            self.get_logger().info(
+                '도크에서 %.2f m 라 %.2f m 다가갑니다 (정렬에 %.2f m 필요)'
+                % (d, fwd, self.A))
+            self.forward(fwd)
+            return
+        back = -err + safety
         self.get_logger().info(
             '도크에서 %.2f m 뿐이라 %.2f m 물러섭니다 (정렬에 %.2f m 필요)'
             % (d, back, self.A))
@@ -612,9 +640,9 @@ class StagedDock(Node):
         self.get_logger().info('SLAM %s' % ('동결' if on else '재개'))
 
     def _goto_entry(self):
-        """Navigate to approach staging pose."""
+        """Nav2 로 복귀 목표까지 갑니다 (정렬 지점보다 뒤입니다)."""
         dx, dy, dyaw = self.dock_pose
-        back = self.A - self.D
+        back = self.S - self.D
         ex = dx - back * math.cos(dyaw)
         ey = dy - back * math.sin(dyaw)
 

@@ -99,8 +99,11 @@ def generate_launch_description():
         # 로봇의 시작 자세. 임무 사이클은 도크에서 시작하므로 기본값이
         # 도킹 완료 자세입니다 (docking.yaml 의 dock_x/dock_y, yaw 는
         # dock_yaw 의 반대 — 후진 도킹이라 도크를 등지고 섭니다).
+        # **docking.yaml 의 dock_distance 를 바꾸면 여기도 함께 바꿉니다.**
+        # 부팅 자세와 실제로 도킹해 멈추는 자세가 달라지면, dock_register 가
+        # 등록하는 도크 좌표가 그만큼 어긋난 채로 남습니다.
         DeclareLaunchArgument('x', default_value='1.0'),
-        DeclareLaunchArgument('y', default_value='-3.67'),
+        DeclareLaunchArgument('y', default_value='-3.64'),
         DeclareLaunchArgument('yaw', default_value='1.5708'),
     ]
 
