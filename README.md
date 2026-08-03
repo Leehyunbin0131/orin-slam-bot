@@ -524,7 +524,7 @@ map ──(rtabmap)──► vodom ──(rgbd_odometry)──► odom ──(EK
 - **Visual Odometry**: `rtabmap_odom/rgbd_odometry` (휠 오도메트리를 motion prediction 초기 모션 예측값으로 활용)
 - **SLAM / Mapping**: `rtabmap_slam/rtabmap` (QoS: RELIABLE + TRANSIENT_LOCAL 적용)
 - **Obstacle Layer**: RPLIDAR `/scan` 기반 2D 동적 장애물 소거 (Ray Clearing)
-- **STVL Layer**: RealSense D435i `/camera/depth/points` 기반 3D 복셀 지형 감쇄 소거 (`voxel_decay: 10.0`)
+- **STVL Layer**: RealSense D435i `/camera/depth/points` 기반 3D 복셀 지형 감쇄 소거 (`voxel_decay`: 로컬 5.0 / 전역 10.0)
 - **속도 파이프라인**: `controller_server` -> `/cmd_vel_nav` -> `velocity_smoother` -> `/cmd_vel_smoothed` -> `twist_mux` -> `/cmd_vel`
 
 ---

@@ -258,7 +258,11 @@ local_costmap:
         # 전방위를 보므로 광선 기반 소거가 정상 동작하고, 2D 라 더 쌉니다.
         plugin: "spatio_temporal_voxel_layer/SpatioTemporalVoxelLayer"
         enabled: true
-        voxel_decay: 10.0        # 재관측 없으면 10초 뒤 소멸 (초)
+        voxel_decay: 5.0         # 재관측 없으면 5초 뒤 소멸 (초).
+        # 전역(아래)보다 짧게 둡니다 — 지나간 사람이 남긴 자국은
+        # 회피 판단에서만 거슬리고, 전역을 짧게 하면 경로가 요동칩니다.
+        # 줄일 때는 카메라만 보는 장애물(낮은 물체, shelf_1 의 튀어나온
+        # 상판)이 시야에서 빠진 사이 사라지지 않는지 확인해야 합니다.
         decay_model: 0           # 0=선형, 1=지수, -1=영구
         voxel_size: 0.05
         track_unknown_space: true

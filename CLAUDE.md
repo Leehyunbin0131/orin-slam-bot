@@ -79,7 +79,7 @@ ROS 2 **Jazzy** + **Gazebo Harmonic** (Ubuntu 24.04). 개발은 시뮬레이션�
   - `NavFn` 의 비용 변환은 컴파일 상수(`COST_NEUTRAL 50`, `COST_FACTOR 0.8`)라 팽창 파라미터로 경로를 벽에서 떼어놓을 수 없습니다. 그쪽으로 튜닝하지 마세요.
 - 코스트맵 레이어:
   - `obstacle_layer` (2D): RPLIDAR `/scan` 전용. 360도라 광선 소거가 정상 동작합니다.
-  - `stvl_layer` (3D 복셀): D435i `/camera/depth/points` 전용. 화각이 87×58도뿐이라 회전 시 광선으로 소거할 수 없어 시간 감쇠를 씁니다 (`voxel_decay: 10.0`, 실측 등 돌린 뒤 9초 내 100→0).
+  - `stvl_layer` (3D 복셀): D435i `/camera/depth/points` 전용. 화각이 87×58도뿐이라 회전 시 광선으로 소거할 수 없어 시간 감쇠를 씁니다 (`voxel_decay`: 로컬 5.0 / 전역 10.0). **로컬만 짧게 둡니다** — 지나간 사람이 남긴 자국은 회피 판단에서만 거슬리고, 전역까지 짧게 하면 경로가 요동칩니다. 줄일 때는 카메라만 보는 장애물(낮은 물체, `shelf_1` 의 튀어나온 상판)이 시야에서 빠진 사이 사라지지 않는지 확인해야 합니다.
   - `inflation_layer`: `cost_scaling_factor: 10.0`, `inflation_radius: 0.40`
 - **`footprint` 로 실제 사각형(0.4×0.4 m)을 명시합니다.** 원형 근사(`robot_radius`)를 쓰면 0.8 m 문을 통과 불가로 봅니다. MPPI 의 `CostCritic.consider_footprint: true` 도 함께 켜야 합니다 — 둘 중 하나만으로는 안 됩니다.
 - **전역 코스트맵 해상도는 yaml 이 아니라 `/map` 이 정합니다.** `StaticLayer` 가 수신 지도 크기에 맞춰 재조정하므로 RTAB-Map 의 `Grid/CellSize`(0.05 m, `slam.launch.py`)가 실제 해상도입니다. 로컬 코스트맵만 yaml 값(0.02 m)을 씁니다.
@@ -311,7 +311,7 @@ ros2 launch orinbot_navigation explore.launch.py     # 스택이 이미 떠 있�
 
 ## 잔여 장애물 소거
 
-- **로컬 코스트맵**: `obstacle_layer` 는 라이다 광선으로 즉시 비워지고, `stvl_layer` 는 `voxel_decay: 10.0` 으로 약 9초에 100 → 0.
+- **로컬 코스트맵**: `obstacle_layer` 는 라이다 광선으로 즉시 비워지고, `stvl_layer` 는 `voxel_decay: 5.0` 으로 선형 감쇠합니다 (전역은 10.0).
 - **RTAB-Map `/map`**: 즉시 소거되지 않습니다. 포즈 그래프의 각 노드가 생성 당시의 격자를 보존하므로 소급 수정되지 않고, 그 자리를 다시 지나며 새 노드가 쌓여야 갱신됩니다.
 - **`static_layer` 의 유령 장애물은 라이다 광선으로 지워지지 않습니다** (레이어가 최댓값으로 합쳐지므로). `localization:=true` 로 운용 중이면 지도가 고정되어 영구히 남습니다.
 

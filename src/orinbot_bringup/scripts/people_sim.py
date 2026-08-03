@@ -27,11 +27,18 @@ YIELD_CLEAR = 1.8          # Clearance distance to resume walking [m]
 YIELD_GIVEUP = 12.0        # Yield timeout before turning around [s]
 
 # (name, start_pose(x, y, yaw), waypoints, speed[m/s], turn[rad/s], pause_at_end[s])
+#
+# The start pose must match the model pose in the world file. Position is
+# dead reckoned from the commanded velocity and never re-read from Gazebo,
+# so any initial mismatch is permanent: the node steers toward a waypoint it
+# believes in while the model walks off in another direction, and the robot
+# yield check then compares against a position that does not exist.
+# The office world spawns every person at yaw 0.
 ROUTES = [
     # Fast pace. Catches up from behind or passes in front.
     ('person_0', (-8.0, 0.0, 0.0), [(8.0, 0.0), (-8.0, 0.0)], 1.20, 1.6, 0.0),
     # Slow pace with long pause at end.
-    ('person_1', (8.0, 6.0, math.pi), [(-8.0, 6.0), (8.0, 6.0)], 0.55, 0.9, 6.0),
+    ('person_1', (8.0, 6.0, 0.0), [(-8.0, 6.0), (8.0, 6.0)], 0.55, 0.9, 6.0),
     # Standard pace.
     ('person_2', (-8.0, -1.6, 0.0), [(8.0, -1.6), (-8.0, -1.6)], 0.85, 1.2, 2.0),
 ]
@@ -53,7 +60,10 @@ class Walker:
         self.yielding = False    # Yielding to robot flag
         self.yield_t0 = None
 
-        self.pub = node.create_publisher(Twist, '/model/%s/cmd_vel' % name, 10)
+        # ROS side of the bridge (gz_bridge.yaml), not the gz topic name:
+        # the bridge listens on /<name>/cmd_vel and forwards it to
+        # /model/<name>/cmd_vel inside Gazebo.
+        self.pub = node.create_publisher(Twist, '/%s/cmd_vel' % name, 10)
 
     def step(self, dt, robot_xy):
         t = Twist()
