@@ -17,6 +17,7 @@ install(
     scripts/dock_marker_board.py
     scripts/staged_dock.py
     scripts/dock_register.py
+    scripts/mission_manager.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

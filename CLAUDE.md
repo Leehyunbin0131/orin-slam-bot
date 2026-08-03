@@ -107,6 +107,34 @@ ROS 2 **Jazzy** + **Gazebo Harmonic** (Ubuntu 24.04). 개발은 시뮬레이션�
 - **따라서 SLAM 정확도와 통로 폭은 하나의 예산입니다.** 정확도를 떨어뜨리는 변경(`Rtabmap/DetectionRate` 감소 등)은 통과 여유를 직접 깎습니다.
 - 시험할 때 **로봇을 통로 안으로 순간이동시키지 마세요.** Gazebo 는 정적 물체와의 초기 관통을 밀어내지 않아 벽에 묻힌 채로 회전합니다. 반드시 밖에서 주행으로 진입시키세요.
 
+## 임무 사이클
+
+로봇청소기와 같은 모델입니다. **도크에서 시작해 임무가 없으면 계속 도크에서 대기하고**, 명령을 받으면 나갔다가 끝나면 스스로 돌아옵니다. 완충되어도 나가지 않습니다 — 실기 배터리는 내장 BMS 가 전류를 끊으므로 붙은 채로 두면 됩니다.
+
+```
+도크 대기 -> 명령 수신 -> 절전 해제 -> 언도킹 -> 임무 수행 -> 복귀 -> 도크 대기
+```
+
+시험 런처는 `mission.launch.py` 이고, 명령은 다른 터미널에서 보냅니다.
+
+```bash
+ros2 launch orinbot_navigation mission.launch.py            # 띄워 두고
+ros2 service call /mission/start_mapping std_srvs/srv/Trigger   # 자동 매핑
+ros2 service call /mission/cancel        std_srvs/srv/Trigger   # 중단 후 복귀
+ros2 topic echo /mission/state                                   # 진행 상황
+```
+
+- **역할 분담**: `auto_dock.py` 는 도킹 스테이션 담당(배터리 감시·절전·도킹/언도킹 실행), `mission_manager.py` 는 임무 담당(명령 수신·순서 지휘). 임무 관리자는 `~/leave` / `~/return` 서비스로 요청만 하고 완료는 `/dock_state` 로 확인합니다.
+- **`auto_undock` 은 false 입니다.** true 로 두면 완충될 때마다 임무와 무관하게 로봇이 나갑니다.
+- **절전 해제가 끝난 것을 확인한 뒤에 언도킹하고, 언도킹이 끝난 뒤에 임무를 켭니다.** 도크에 있는 동안 Nav2 는 PAUSE 라 이 상태에서 낸 주행 목표는 전부 즉시 거절되고, 증상은 "명령을 넣었는데 아무 일도 안 일어남"으로만 보입니다.
+- **탐사 노드는 `start_paused:=true` 로 띄웁니다.** 안 그러면 임무 명령 없이 부팅 직후 로봇이 나갑니다.
+- **임무를 다시 시작하기 전에 `/frontier_explorer/reset` 을 부릅니다.** 완료 플래그는 한 번 서면 남아 있어, 지우지 않으면 두 번째 임무가 시작하자마자 끝납니다.
+- **임무 중 배터리가 떨어지면 `auto_dock` 이 스스로 끌고 들어가고, 임무는 `SUSPENDED` 로 살아 있다가 충전 후 이어서 합니다.** 처음부터 다시 하면 이미 그린 곳을 또 돕니다.
+- **임무 사이클에서는 탐사의 `return_home` 을 끕니다.** 도킹이 진입점까지 데려가므로 같은 길을 두 번 갑니다.
+- **`mission.launch.py` 는 `navigation.launch.py` include 를 `GroupAction` 으로 감싸지 않습니다.** 하위 런치가 SLAM/Nav2/도킹을 `OnProcessExit` 으로 나중에 띄우는데, `GroupAction` 은 include 가 끝날 때 스코프를 닫아 버려 뒤늦게 실행되는 핸들러가 인자를 못 찾습니다 (`launch configuration 'localization' does not exist` 로 스택 전체가 내려갑니다). **이벤트 핸들러를 쓰는 런치를 include 할 때는 스코프를 살려 두세요.**
+
+임무를 추가하려면 `mission_manager.py` 의 `MISSIONS` 에 항목과 실행 함수를 더하면 됩니다. 깨우기·언도킹·복귀는 공통 절차라 임무 쪽에서 다시 쓸 필요가 없습니다.
+
 ## 자동 탐사 (프론티어)
 
 ```bash

@@ -78,6 +78,13 @@ def generate_launch_description():
             'explore', default_value='false',
             description='Autonomous frontier exploration toggle'),
         DeclareLaunchArgument(
+            'explore_paused', default_value='false',
+            description='탐사를 멈춘 채로 시작 (임무 관리자가 켤 때까지 대기)'),
+        DeclareLaunchArgument(
+            'explore_return_home', default_value='true',
+            description='탐사 완료 후 시작 지점으로 복귀 (임무 사이클에서는 '
+                        '도킹이 진입점까지 데려가므로 false 가 맞습니다)'),
+        DeclareLaunchArgument(
             'dock', default_value='true',
             description='Charging docking stack toggle'),
         DeclareLaunchArgument(
@@ -89,6 +96,12 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'initial_soc', default_value='0.85',
             description='Initial battery state of charge (0 to 1)'),
+        # 로봇의 시작 자세. 임무 사이클은 도크에서 시작하므로 기본값이
+        # 도킹 완료 자세입니다 (docking.yaml 의 dock_x/dock_y, yaw 는
+        # dock_yaw 의 반대 — 후진 도킹이라 도크를 등지고 섭니다).
+        DeclareLaunchArgument('x', default_value='1.0'),
+        DeclareLaunchArgument('y', default_value='-3.67'),
+        DeclareLaunchArgument('yaw', default_value='1.5708'),
     ]
 
     sim = GroupAction([IncludeLaunchDescription(
@@ -99,6 +112,9 @@ def generate_launch_description():
             'gui': LaunchConfiguration('gui'),
             'world': LaunchConfiguration('world'),
             'use_pointcloud': LaunchConfiguration('use_pointcloud'),
+            'x': LaunchConfiguration('x'),
+            'y': LaunchConfiguration('y'),
+            'yaw': LaunchConfiguration('yaw'),
         }.items(),
         condition=IfCondition(LaunchConfiguration('use_sim')),
     )])
@@ -125,6 +141,10 @@ def generate_launch_description():
     explore = GroupAction([IncludeLaunchDescription(
         PythonLaunchDescriptionSource([
             PathJoinSubstitution([nav_share, 'launch', 'explore.launch.py'])]),
+        launch_arguments={
+            'start_paused': LaunchConfiguration('explore_paused'),
+            'return_home': LaunchConfiguration('explore_return_home'),
+        }.items(),
     )], condition=IfCondition(LaunchConfiguration('explore')))
 
     dock = GroupAction([IncludeLaunchDescription(

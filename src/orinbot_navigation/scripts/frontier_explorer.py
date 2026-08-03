@@ -18,7 +18,8 @@ from rclpy.node import Node
 from rclpy.qos import QoSDurabilityPolicy, QoSProfile, QoSReliabilityPolicy
 from rclpy.time import Time
 from scipy import ndimage
-from std_msgs.msg import Bool, ColorRGBA
+from std_msgs.msg import Bool, ColorRGBA, String
+from std_srvs.srv import Trigger
 from tf2_ros import Buffer, TransformListener
 from visualization_msgs.msg import Marker, MarkerArray
 
@@ -66,6 +67,9 @@ class FrontierExplorer(Node):
         # Overall exploration timeout [s] (0 for unlimited)
         p('explore_timeout', 0.0)
         p('publish_markers', True)
+        # 멈춘 채로 시작합니다. 임무 관리자가 켤 때까지 목표를 내지 않습니다 —
+        # 도크에서 부팅한 직후에 탐사가 돌면 임무 명령 없이 로봇이 나갑니다.
+        p('start_paused', False)
         # Occupancy thresholds
         p('free_threshold', 25)
         p('occupied_threshold', 65)
@@ -132,17 +136,32 @@ class FrontierExplorer(Node):
         self.costmap = None
         self.create_subscription(
             OccupancyGrid, 'global_costmap/costmap', self._on_costmap, latched)
-        self.paused = False
+        self.paused = bool(g('start_paused'))
         self.create_subscription(Bool, 'exploration_enabled', self._on_enable, 10)
+
+        # 임무 관리자가 완료를 판정하는 근거입니다. 늦게 뜬 구독자도 현재
+        # 상태를 받도록 TRANSIENT_LOCAL 입니다.
+        self.status_pub = self.create_publisher(String, 'exploration_state', latched)
+        self.create_service(Trigger, '~/reset', self._srv_reset)
+        self._publish_status()
 
         self.create_timer(self.period, self._tick)
 
         self.get_logger().info(
-            'Waiting for /map and navigate_to_pose action server to start exploration')
+            '탐사 노드 시작 (%s). /map 과 navigate_to_pose 를 기다립니다'
+            % ('멈춘 채로 대기' if self.paused else '즉시 시작'))
 
     # ---------------- Inputs ----------------
     def _on_map(self, msg):
         self.map_msg = msg
+
+    def _status(self):
+        if self.finished:
+            return 'COMPLETE'
+        return 'PAUSED' if self.paused else 'EXPLORING'
+
+    def _publish_status(self):
+        self.status_pub.publish(String(data=self._status()))
 
     def _on_enable(self, msg):
         val = bool(msg.data)
@@ -150,9 +169,36 @@ class FrontierExplorer(Node):
             self.paused = True
             self._cancel()
             self.get_logger().info('Exploration paused by external request')
+            self._publish_status()
         elif val and self.paused:
             self.paused = False
             self.get_logger().info('Exploration resumed')
+            self._publish_status()
+
+    def _srv_reset(self, _req, res):
+        """다음 임무를 위해 탐사 상태를 지웁니다.
+
+        완료 플래그는 한 번 서면 계속 남으므로, 지우지 않으면 두 번째 임무가
+        시작하자마자 '이미 완료'로 끝납니다. 블랙리스트와 기준 위치도 지난
+        임무의 것이라 함께 버립니다.
+        """
+        self._cancel()
+        self.finished = False
+        self.going_home = False
+        self.home = None
+        self.home_tries = 0
+        self.blacklist = []
+        self.empty_ticks = 0
+        self.visited = 0
+        self.t0 = None
+        self.last_pose = None
+        self.best_gap = None
+        self.last_progress_t = None
+        self.all_blacklisted_warned = False
+        self._publish_status()
+        res.success, res.message = True, '탐사 상태를 초기화했습니다'
+        self.get_logger().info('탐사 상태 초기화 — 새 임무를 받을 준비가 됐습니다')
+        return res
 
     def _on_costmap(self, msg):
         self.costmap = msg
@@ -447,6 +493,7 @@ class FrontierExplorer(Node):
         self.get_logger().info(
             '=== Exploration Complete: %s === visited %d, abandoned %d, %.0f s'
             % (why, self.visited, len(self.blacklist), dt))
+        self._publish_status()
         if self.return_home and self.home is not None:
             self.get_logger().info('Returning to home pose (%.2f, %.2f)' % self.home)
             self.going_home = True
@@ -471,7 +518,7 @@ class FrontierExplorer(Node):
                 return
             self.get_logger().info('Retrying return home (%d/%d)'
                                    % (self.home_tries + 1, self.home_retries))
-            self.send_home()
+            self._send_home()
 
     # ---------------- Visualization ----------------
     def _draw(self, clusters):

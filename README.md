@@ -365,6 +365,25 @@ map --(rtabmap)--> vodom --(rgbd_odometry)--> odom --(EKF)--> base_footprint
 ros2 launch orinbot_navigation navigation.launch.py
 ```
 
+### 임무 모드 — 도크에서 대기하다 명령을 받아 수행
+
+로봇청소기와 같은 사이클입니다. 도크에서 시작해 임무가 없으면 계속 충전하며 대기하고,
+명령을 받으면 절전을 풀고 나갔다가 끝나면 스스로 복귀합니다.
+
+```bash
+# 터미널 1 — 띄워 두기 (로봇이 도크에 세워진 채 시작합니다)
+ros2 launch orinbot_navigation mission.launch.py
+
+# 터미널 2 — 임무 명령
+ros2 service call /mission/start_mapping std_srvs/srv/Trigger   # 자동 매핑 시작
+ros2 service call /mission/cancel        std_srvs/srv/Trigger   # 중단하고 복귀
+ros2 topic echo /mission/state                                   # 진행 상황
+```
+
+`/mission/state` 는 `DOCKED → WAKING → UNDOCKING → RUNNING:mapping → RETURNING → DOCKED`
+순으로 바뀝니다. 임무 중 배터리가 떨어지면 `SUSPENDED:mapping` 으로 잠시 멈추고
+충전이 끝나면 이어서 합니다.
+
 ### 실행 옵션
 
 ```bash
