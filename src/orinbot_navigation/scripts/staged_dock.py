@@ -22,6 +22,8 @@ from rclpy.action import ActionClient, ActionServer, CancelResponse, GoalRespons
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
+from rclpy.qos import qos_profile_sensor_data
+from sensor_msgs.msg import LaserScan
 from std_srvs.srv import Empty
 
 # DockRobot.Feedback status values (matching opennav_docking spec)
@@ -61,6 +63,26 @@ class StagedDock(Node):
         p('rotate_distance', 0.55)
         # 회전점 허용 오차 [m]. 이 안에 들면 더 보정하지 않습니다.
         p('rotate_tolerance', 0.02)
+
+        # --- 후진 구간을 뒤쪽 라이다로 닫습니다 ---
+        # 180도 회전 뒤에는 마커가 등 뒤라 보이지 않아, 후진이 오도메트리
+        # 개루프가 됩니다. 회전 중 생긴 밀림까지 그대로 최종 세로 오차로
+        # 남습니다. 라이다는 360도라 뒤쪽 빔이 이미 있고, 스캔 평면이 도크
+        # 패널보다 높아 그 너머 벽을 직접 봅니다.
+        p('use_rear_lidar', True)
+        # 도킹 완료 시 뒤쪽 라이다가 읽어야 할 거리 [m].
+        #   벽 안쪽면 -3.95 / 도킹 시 로봇 중심 -3.67 / 라이다는 중심에서
+        #   전방 0.15 인데 회전 후엔 그 방향이 벽 반대쪽이므로
+        #   (-3.67 + 0.15) - (-3.95) = 0.43
+        # **도크나 로봇 기하를 바꾸면 이 값도 다시 계산해야 합니다.**
+        p('rear_target', 0.43)
+        # 정후방에서 이 각도 안의 빔만 씁니다 [rad]. 각 빔을 후진 축으로
+        # 투영하므로 창이 넓어도 편향은 없지만, 좁게 두어 벽이 아닌 것이
+        # 섞이는 것을 막습니다.
+        p('rear_window', 0.0873)          # ±5도
+        p('rear_tolerance', 0.005)
+        p('rear_min_beams', 5)
+        p('rear_timeout', 30.0)
         # 마커면에서 정렬 지점까지 [m]
         p('approach_distance', 0.65)
 
@@ -106,6 +128,12 @@ class StagedDock(Node):
         self.reverse = g('reverse_dock')
         self.R = g('rotate_distance')
         self.rot_tol = g('rotate_tolerance')
+        self.use_rear = g('use_rear_lidar')
+        self.rear_target = g('rear_target')
+        self.rear_window = g('rear_window')
+        self.rear_tol = g('rear_tolerance')
+        self.rear_min_beams = int(g('rear_min_beams'))
+        self.rear_timeout = g('rear_timeout')
         # 정렬 뒤 직진해서 멈출 지점 — 후진 도킹이면 회전점입니다.
         self.stop_at = self.R if self.reverse else self.D
         self.A = g('approach_distance')
@@ -137,6 +165,10 @@ class StagedDock(Node):
         self.marker = None
         self.create_subscription(PoseStamped, 'detected_dock_pose',
                                  self._marker, 10, callback_group=self.cb)
+        # 센서 QoS(BEST_EFFORT)로 받습니다 — 발행자가 RELIABLE 이어도 호환됩니다.
+        self.scan = None
+        self.create_subscription(LaserScan, 'scan', self._scan,
+                                 qos_profile_sensor_data, callback_group=self.cb)
         self.cmd = self.create_publisher(TwistStamped, 'cmd_vel_dock', 10)
 
         self.nav_ac = ActionClient(self, NavigateToPose, 'navigate_to_pose',
@@ -164,6 +196,9 @@ class StagedDock(Node):
     # ---------------- Inputs ----------------
     def _marker(self, msg):
         self.marker = msg
+
+    def _scan(self, msg):
+        self.scan = msg
 
     def _drive(self, v, w):
         m = TwistStamped()
@@ -251,6 +286,69 @@ class StagedDock(Node):
             time.sleep(0.02)
         self._stop()
         time.sleep(self.settle)
+        return True
+
+    # ------------------------------------------------------- 뒤쪽 라이다
+    def rear_distance(self):
+        """정후방 벽까지의 수직 거리 [m]. 못 재면 None.
+
+        각 빔을 후진 축으로 투영(r*cos)해서 창 안의 빔이 비스듬히 맞아
+        길게 나오는 편향을 없앱니다. 중앙값이라 이상치 몇 개는 무시됩니다.
+        """
+        s = self.scan
+        if s is None:
+            return None
+        vals = []
+        for i, r in enumerate(s.ranges):
+            if not math.isfinite(r) or r < s.range_min or r > s.range_max:
+                continue
+            off = abs(wrap(s.angle_min + i * s.angle_increment - math.pi))
+            if off <= self.rear_window:
+                vals.append(r * math.cos(off))
+        if len(vals) < self.rear_min_beams:
+            return None
+        vals.sort()
+        return vals[len(vals) // 2]
+
+    def backward_to_rear(self, target, expect):
+        """뒤쪽 라이다를 보며 목표 거리까지 후진합니다.
+
+        expect 는 오도메트리로 예상한 후진량입니다. 라이다가 엉뚱한 것을
+        보고 있을 때 도크로 밀고 들어가지 않도록, 이동량이 예상의 1.5배를
+        넘으면 중단하는 안전장치로만 씁니다.
+        """
+        d0 = self.rear_distance()
+        if d0 is None:
+            return False
+        limit = max(0.05, expect * 1.5)
+        x0, y0, _ = self._odom_pose()
+        t0 = time.time()
+        while time.time() - t0 < self.rear_timeout:
+            d = self.rear_distance()
+            if d is None:
+                self._stop()
+                self.get_logger().warning('후진 중 뒤쪽 빔을 잃었습니다')
+                return False
+            err = d - target
+            if err <= self.rear_tol:
+                break
+            x, y, _ = self._odom_pose()
+            if math.hypot(x - x0, y - y0) > limit:
+                self._stop()
+                self.get_logger().error(
+                    '후진량이 예상(%.3f m)의 1.5배를 넘었습니다 — 중단'
+                    % expect)
+                return False
+            self._drive(-max(self.v_creep, min(self.v_fwd, err)), 0.0)
+            time.sleep(0.02)
+        self._stop()
+        time.sleep(self.settle)
+        d1 = self.rear_distance()
+        self.get_logger().info(
+            '후진 완료 — 뒤쪽 거리 %.3f -> %.3f m (목표 %.3f, 이동 %.3f m)'
+            % (d0, d1 if d1 is not None else float('nan'), target,
+               math.hypot(*[a - b for a, b in
+                            zip(self._odom_pose()[:2], (x0, y0))])))
         return True
 
     def crab_move(self, shift):
@@ -409,7 +507,16 @@ class StagedDock(Node):
             self.get_logger().info(
                 '회전점 %.3f m — 180도 회전 후 %.3f m 후진합니다' % (here, back))
             self.rotate(math.pi)
-            if back > 0.001:
+            # 회전이 끝나야 뒤쪽 빔이 도크를 향합니다. 여기서부터는 마커를
+            # 못 보므로, 오도메트리 대신 라이다로 목표 거리까지 닫습니다.
+            # 이렇게 하면 회전 중 생긴 밀림도 함께 흡수됩니다.
+            done = False
+            if self.use_rear and back > 0.001:
+                done = self.backward_to_rear(self.rear_target, back)
+                if not done:
+                    self.get_logger().warning(
+                        '뒤쪽 라이다를 쓸 수 없어 오도메트리로 후진합니다')
+            if not done and back > 0.001:
                 self.forward(-back)
 
         r.success, r.error_code = True, 0

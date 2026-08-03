@@ -22,6 +22,7 @@ ros2 launch orinbot_navigation navigation.launch.py
 - [로봇 사양](#로봇-사양)
 - [패키지 구성](#패키지-구성)
 - [설치](#설치) · [빌드](#빌드)
+- **[실행 구성 3가지](#실행-구성-3가지)** — PC 단독 / 분산(PC+Orin) / 실기 단독
 - [실행](#실행) — 시뮬레이터 단독, 월드, 조종, 예제
   - [시뮬레이션 실행](#시뮬레이션-실행)
   - [제공 월드](#제공-월드)
@@ -116,6 +117,116 @@ source /opt/ros/jazzy/setup.bash
 colcon build --symlink-install
 source install/setup.bash
 ```
+
+## 실행 구성 3가지
+
+같은 코드를 세 가지 배치로 실행할 수 있습니다. **무엇이 어느 기계에서 도는지**가 다릅니다.
+
+| | 구성 | Gazebo | RViz | 주 연산 | 상태 |
+|---|---|---|---|---|---|
+| **1** | PC 단독 | PC | PC | PC | 검증됨 |
+| **2** | 분산 (PC + Orin) | PC | PC | **Orin** | 검증됨 |
+| **3** | 실기 단독 | 없음 | 없음 | **로봇** | **준비 중** (아래 참고) |
+
+---
+
+### 구성 1 — PC 한 대에서 전부
+
+가장 단순합니다. 개발과 회귀 시험의 기본 구성입니다.
+
+```bash
+source /opt/ros/jazzy/setup.bash && source install/setup.bash
+export ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST
+
+ros2 launch orinbot_navigation navigation.launch.py explore:=true
+```
+
+`navigation.launch.py`가 시뮬레이터·SLAM·Nav2·도킹·RViz를 순서대로 모두 띄웁니다.
+
+---
+
+### 구성 2 — 주 연산을 Orin이, 화면은 PC가
+
+실기 배치에 한 걸음 가까운 구성입니다. **Orin이 VSLAM과 Nav2를 실제로 감당하는지** 확인할 때 씁니다.
+
+```
+개발 PC                          Orin
+─────────────────                ──────────────────────────
+Gazebo (물리 + 센서 렌더링)  ←→   카메라 전처리 (뎁스 → 포인트클라우드)
+RViz (시각화)                     VSLAM (rgbd_odometry + rtabmap)
+                                  Nav2 / 탐사 / 도킹
+```
+
+**① 두 기계의 디스커버리를 맞춥니다** — `ROS_DOMAIN_ID`가 같아야 하고, `ROS_AUTOMATIC_DISCOVERY_RANGE`는 **`LOCALHOST`가 아니어야** 합니다 (기본값 `SUBNET`).
+
+```bash
+# PC와 Orin 양쪽 모두
+export ROS_DOMAIN_ID=0
+unset ROS_AUTOMATIC_DISCOVERY_RANGE
+```
+
+**② PC — 시뮬레이터와 RViz만**
+
+```bash
+ros2 launch orinbot_bringup sim.launch.py use_rviz:=false use_pointcloud:=false
+ros2 run rviz2 rviz2 -d src/orinbot_navigation/rviz/navigation.rviz \
+  --ros-args -p use_sim_time:=true
+```
+
+> **`use_pointcloud:=false`가 중요합니다.** 포인트클라우드를 PC에서 만들어 보내면 송신이 **589 Mbps**까지 오르는데, Orin에서 만들면 **134 Mbps**로 떨어집니다(1 Gbps 링크 기준 59% → 13%). 뚱뚱한 포인트클라우드 대신 홀쭉한 뎁스 영상을 보내고 받는 쪽에서 부풀리는 것이고, **실기에서는 어차피 이 배치가 강제됩니다.**
+
+**③ Orin — 카메라 전처리 + 주 연산**
+
+`use_pointcloud:=false`로 끈 두 노드(`point_cloud_xyz`, `depth_register`)를 Orin에서 띄운 뒤, 시뮬레이터 없이 항법 스택만 올립니다.
+
+```bash
+ros2 launch orinbot_navigation navigation.launch.py \
+  use_sim:=false use_rviz:=false explore:=true
+```
+
+**실측 성적** (`room.sdf`, 1 Gbps 유선):
+
+| 항목 | 값 |
+|---|---|
+| Orin CPU | 3.2 / 6 코어 |
+| 탐사 완주 | 138~170초 |
+| SLAM 위치 오차 | 중앙값 5 mm |
+| PC 송신 대역폭 | 134 Mbps |
+
+> **탐사와 도킹을 동시에 켜지 마십시오.** 둘 다 켜면 Orin CPU가 4.9/6 코어까지 올라 `rtabmap`이 처리 예산(0.5초)을 거의 다 쓰고, 자세 추정이 무너져 지도가 깨집니다. 실제 운용에서도 둘은 동시에 필요하지 않으며, `auto_dock`의 절전 기능과 `dock_marker_board`의 `~/pause`가 이를 위해 준비되어 있습니다.
+
+---
+
+### 구성 3 — 실기 단독 (준비 중)
+
+로봇 위에서 Gazebo와 RViz 없이 주 연산만 돌리는 구성입니다. **최종 배치 목표이지만 아직 그대로는 동작하지 않습니다.**
+
+바꿔야 할 것:
+
+| 항목 | 현재 | 실기에서 필요한 것 |
+|---|---|---|
+| **시계** | `use_sim_time: true`가 설정·런치에 **하드코딩** | 런치 인자로 빼고 `false`. 실기에는 `/clock`이 없어 지금 그대로면 노드들이 시계를 기다리며 멈춥니다 |
+| 센서 | Gazebo 브리지 | `realsense2_camera` (`align_depth.enable:=true`), `rplidar_ros` |
+| 구동 | `gz_ros2_control` | URDF `<hardware>` 블록을 실물 `hardware_interface` 플러그인으로 교체 |
+| 배터리 | `battery_sim` (Gazebo 참값으로 접촉 판정) | 실물 BMS. 접촉 판정은 충전 전류로 |
+| 안전 | 도크 앞 0.7 m는 코스트맵 충돌 검사 꺼짐 | **범퍼 스위치나 모터 전류 제한 등 소프트웨어 밖의 보호 수단** |
+
+의도한 실행 형태:
+
+```bash
+# 센서·구동 드라이버 (별도 런치)
+ros2 launch orinbot_bringup robot.launch.py          # 아직 없음
+
+# 주 연산만 — 시뮬레이터도 RViz도 없이
+ros2 launch orinbot_navigation navigation.launch.py \
+  use_sim:=false use_rviz:=false use_sim_time:=false  # use_sim_time 인자 추가 필요
+```
+
+원격에서 화면을 보려면 **구성 2와 같은 방식**으로 다른 PC에서 RViz만 띄우면 됩니다 (`ROS_DOMAIN_ID` 일치, 디스커버리 범위 `SUBNET`).
+
+실기 도킹 절차(마커 인쇄·부착, 카메라 내부 파라미터, 도크 좌표 등록, 보정값 재측정)는 [`docs/ros2-lessons.md`](docs/ros2-lessons.md)를 참고하십시오.
+
+---
 
 ## 실행
 
