@@ -55,7 +55,7 @@
     </model>
     <model name="w_s0">
       <static>true</static>
-      <pose>-8.7500 -4.0600 1.2000 0 0 0</pose>
+      <pose>-8.7500 -4.0100 1.2000 0 0 0</pose>
       <link name="link">
       <collision name="c">
         <pose>0 0 0 0 0 0</pose>
@@ -89,7 +89,7 @@
     </model>
     <model name="w_s2">
       <static>true</static>
-      <pose>-6.2500 -4.0600 1.2000 0 0 0</pose>
+      <pose>-6.2500 -4.0100 1.2000 0 0 0</pose>
       <link name="link">
       <collision name="c">
         <pose>0 0 0 0 0 0</pose>
@@ -123,7 +123,7 @@
     </model>
     <model name="w_s4">
       <static>true</static>
-      <pose>-3.7500 -4.0600 1.2000 0 0 0</pose>
+      <pose>-3.7500 -4.0100 1.2000 0 0 0</pose>
       <link name="link">
       <collision name="c">
         <pose>0 0 0 0 0 0</pose>
@@ -157,7 +157,7 @@
     </model>
     <model name="w_s6">
       <static>true</static>
-      <pose>-1.2500 -4.0600 1.2000 0 0 0</pose>
+      <pose>-1.2500 -4.0100 1.2000 0 0 0</pose>
       <link name="link">
       <collision name="c">
         <pose>0 0 0 0 0 0</pose>
@@ -191,7 +191,7 @@
     </model>
     <model name="w_s8">
       <static>true</static>
-      <pose>1.2500 -4.0600 1.2000 0 0 0</pose>
+      <pose>1.2500 -4.0100 1.2000 0 0 0</pose>
       <link name="link">
       <collision name="c">
         <pose>0 0 0 0 0 0</pose>
@@ -225,7 +225,7 @@
     </model>
     <model name="w_s10">
       <static>true</static>
-      <pose>3.7500 -4.0600 1.2000 0 0 0</pose>
+      <pose>3.7500 -4.0100 1.2000 0 0 0</pose>
       <link name="link">
       <collision name="c">
         <pose>0 0 0 0 0 0</pose>
@@ -259,7 +259,7 @@
     </model>
     <model name="w_s12">
       <static>true</static>
-      <pose>6.2500 -4.0600 1.2000 0 0 0</pose>
+      <pose>6.2500 -4.0100 1.2000 0 0 0</pose>
       <link name="link">
       <collision name="c">
         <pose>0 0 0 0 0 0</pose>
@@ -293,7 +293,7 @@
     </model>
     <model name="w_s14">
       <static>true</static>
-      <pose>8.7500 -4.0600 1.2000 0 0 0</pose>
+      <pose>8.7500 -4.0100 1.2000 0 0 0</pose>
       <link name="link">
       <collision name="c">
         <pose>0 0 0 0 0 0</pose>
@@ -2241,45 +2241,45 @@
       <static>true</static>
       <link name="link">
       <visual name="dock_panel">
-        <pose>1.0 -3.915 0.225 0 0 0</pose>
+        <pose>1.0 -3.9250000000000003 0.225 0 0 0</pose>
         <geometry><box><size>0.52 0.05 0.45</size></box></geometry>
         <material><diffuse>1 1 1 1</diffuse><pbr><metal>
           <albedo_map>model://room_materials/materials/textures/dock_body.png</albedo_map><roughness>0.92</roughness>
         </metal></pbr></material>
       </visual>
       <collision name="dock_panel_c">
-        <pose>1.0 -3.915 0.225 0 0 0</pose>
+        <pose>1.0 -3.9250000000000003 0.225 0 0 0</pose>
         <geometry><box><size>0.52 0.05 0.45</size></box></geometry>
       </collision>
       <visual name="dock_marker_1">
-        <pose>0.84 -3.888 0.31 0 0 0</pose>
+        <pose>0.84 -3.898 0.31 0 0 0</pose>
         <geometry><box><size>0.14 0.008 0.14</size></box></geometry>
         <material><diffuse>1 1 1 1</diffuse><pbr><metal>
           <albedo_map>model://room_materials/materials/textures/dock_marker_1.png</albedo_map><roughness>0.92</roughness>
         </metal></pbr></material>
       </visual>
       <visual name="dock_marker_0">
-        <pose>1.0 -3.888 0.31 0 0 0</pose>
+        <pose>1.0 -3.898 0.31 0 0 0</pose>
         <geometry><box><size>0.14 0.008 0.14</size></box></geometry>
         <material><diffuse>1 1 1 1</diffuse><pbr><metal>
           <albedo_map>model://room_materials/materials/textures/dock_marker_0.png</albedo_map><roughness>0.92</roughness>
         </metal></pbr></material>
       </visual>
       <visual name="dock_marker_2">
-        <pose>1.16 -3.888 0.31 0 0 0</pose>
+        <pose>1.16 -3.898 0.31 0 0 0</pose>
         <geometry><box><size>0.14 0.008 0.14</size></box></geometry>
         <material><diffuse>1 1 1 1</diffuse><pbr><metal>
           <albedo_map>model://room_materials/materials/textures/dock_marker_2.png</albedo_map><roughness>0.92</roughness>
         </metal></pbr></material>
       </visual>
-      <visual name="dock_plate_0"><pose>0.945 -3.77 0.02 0 0 0</pose><geometry><box><size>0.075 0.1 0.04</size></box></geometry><material><ambient>0.72 0.45 0.20 1</ambient><diffuse>0.72 0.45 0.20 1</diffuse></material></visual>
+      <visual name="dock_plate_0"><pose>0.945 -3.72 0.02 0 0 0</pose><geometry><box><size>0.075 0.1 0.04</size></box></geometry><material><ambient>0.72 0.45 0.20 1</ambient><diffuse>0.72 0.45 0.20 1</diffuse></material></visual>
       <collision name="dock_plate_0_c">
-        <pose>0.945 -3.77 0.02 0 0 0</pose>
+        <pose>0.945 -3.72 0.02 0 0 0</pose>
         <geometry><box><size>0.075 0.1 0.04</size></box></geometry>
       </collision>
-      <visual name="dock_plate_1"><pose>1.055 -3.77 0.02 0 0 0</pose><geometry><box><size>0.075 0.1 0.04</size></box></geometry><material><ambient>0.72 0.45 0.20 1</ambient><diffuse>0.72 0.45 0.20 1</diffuse></material></visual>
+      <visual name="dock_plate_1"><pose>1.055 -3.72 0.02 0 0 0</pose><geometry><box><size>0.075 0.1 0.04</size></box></geometry><material><ambient>0.72 0.45 0.20 1</ambient><diffuse>0.72 0.45 0.20 1</diffuse></material></visual>
       <collision name="dock_plate_1_c">
-        <pose>1.055 -3.77 0.02 0 0 0</pose>
+        <pose>1.055 -3.72 0.02 0 0 0</pose>
         <geometry><box><size>0.075 0.1 0.04</size></box></geometry>
       </collision>
       </link>

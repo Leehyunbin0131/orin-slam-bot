@@ -78,7 +78,7 @@
     </model>
     <model name="wall_s_0">
       <static>true</static>
-      <pose>-10.5000 -4.0750 1.1000 0 0 0</pose>
+      <pose>-10.5000 -4.0250 1.1000 0 0 0</pose>
       <link name="link">
       <collision name="c">
         <pose>0 0 0 0 0 0</pose>
@@ -120,7 +120,7 @@
     </model>
     <model name="wall_s_2">
       <static>true</static>
-      <pose>-7.5000 -4.0750 1.1000 0 0 0</pose>
+      <pose>-7.5000 -4.0250 1.1000 0 0 0</pose>
       <link name="link">
       <collision name="c">
         <pose>0 0 0 0 0 0</pose>
@@ -162,7 +162,7 @@
     </model>
     <model name="wall_s_4">
       <static>true</static>
-      <pose>-4.5000 -4.0750 1.1000 0 0 0</pose>
+      <pose>-4.5000 -4.0250 1.1000 0 0 0</pose>
       <link name="link">
       <collision name="c">
         <pose>0 0 0 0 0 0</pose>
@@ -204,7 +204,7 @@
     </model>
     <model name="wall_s_6">
       <static>true</static>
-      <pose>-1.5000 -4.0750 1.1000 0 0 0</pose>
+      <pose>-1.5000 -4.0250 1.1000 0 0 0</pose>
       <link name="link">
       <collision name="c">
         <pose>0 0 0 0 0 0</pose>
@@ -246,7 +246,7 @@
     </model>
     <model name="wall_s_8">
       <static>true</static>
-      <pose>1.5000 -4.0750 1.1000 0 0 0</pose>
+      <pose>1.5000 -4.0250 1.1000 0 0 0</pose>
       <link name="link">
       <collision name="c">
         <pose>0 0 0 0 0 0</pose>
@@ -288,7 +288,7 @@
     </model>
     <model name="wall_s_10">
       <static>true</static>
-      <pose>4.5000 -4.0750 1.1000 0 0 0</pose>
+      <pose>4.5000 -4.0250 1.1000 0 0 0</pose>
       <link name="link">
       <collision name="c">
         <pose>0 0 0 0 0 0</pose>
@@ -330,7 +330,7 @@
     </model>
     <model name="wall_s_12">
       <static>true</static>
-      <pose>7.5000 -4.0750 1.1000 0 0 0</pose>
+      <pose>7.5000 -4.0250 1.1000 0 0 0</pose>
       <link name="link">
       <collision name="c">
         <pose>0 0 0 0 0 0</pose>
@@ -372,7 +372,7 @@
     </model>
     <model name="wall_s_14">
       <static>true</static>
-      <pose>10.5000 -4.0750 1.1000 0 0 0</pose>
+      <pose>10.5000 -4.0250 1.1000 0 0 0</pose>
       <link name="link">
       <collision name="c">
         <pose>0 0 0 0 0 0</pose>
@@ -1676,7 +1676,7 @@
       <static>true</static>
       <link name="link">
       <visual name="dock_panel">
-        <pose>1.0 -3.9 0.225 0 0 0</pose>
+        <pose>1.0 -3.9250000000000003 0.225 0 0 0</pose>
         <geometry><box><size>0.52 0.05 0.45</size></box></geometry>
         <material>
           <diffuse>1 1 1 1</diffuse>
@@ -1687,11 +1687,11 @@
         </material>
       </visual>
       <collision name="dock_panel_c">
-        <pose>1.0 -3.9 0.225 0 0 0</pose>
+        <pose>1.0 -3.9250000000000003 0.225 0 0 0</pose>
         <geometry><box><size>0.52 0.05 0.45</size></box></geometry>
       </collision>
       <visual name="dock_marker_1">
-        <pose>0.84 -3.8729999999999998 0.31 0 0 0</pose>
+        <pose>0.84 -3.898 0.31 0 0 0</pose>
         <geometry><box><size>0.14 0.008 0.14</size></box></geometry>
         <material>
           <diffuse>1 1 1 1</diffuse>
@@ -1702,7 +1702,7 @@
         </material>
       </visual>
       <visual name="dock_marker_0">
-        <pose>1.0 -3.8729999999999998 0.31 0 0 0</pose>
+        <pose>1.0 -3.898 0.31 0 0 0</pose>
         <geometry><box><size>0.14 0.008 0.14</size></box></geometry>
         <material>
           <diffuse>1 1 1 1</diffuse>
@@ -1713,7 +1713,7 @@
         </material>
       </visual>
       <visual name="dock_marker_2">
-        <pose>1.16 -3.8729999999999998 0.31 0 0 0</pose>
+        <pose>1.16 -3.898 0.31 0 0 0</pose>
         <geometry><box><size>0.14 0.008 0.14</size></box></geometry>
         <material>
           <diffuse>1 1 1 1</diffuse>
@@ -1724,7 +1724,7 @@
         </material>
       </visual>
       <visual name="dock_plate_0">
-        <pose>0.945 -3.77 0.02 0 0 0</pose>
+        <pose>0.945 -3.72 0.02 0 0 0</pose>
         <geometry><box><size>0.075 0.1 0.04</size></box></geometry>
         <material>
           <ambient>0.72 0.45 0.2 1</ambient>
@@ -1733,11 +1733,11 @@
         </material>
       </visual>
       <collision name="dock_plate_0_c">
-        <pose>0.945 -3.77 0.02 0 0 0</pose>
+        <pose>0.945 -3.72 0.02 0 0 0</pose>
         <geometry><box><size>0.075 0.1 0.04</size></box></geometry>
       </collision>
       <visual name="dock_plate_1">
-        <pose>1.055 -3.77 0.02 0 0 0</pose>
+        <pose>1.055 -3.72 0.02 0 0 0</pose>
         <geometry><box><size>0.075 0.1 0.04</size></box></geometry>
         <material>
           <ambient>0.72 0.45 0.2 1</ambient>
@@ -1746,7 +1746,7 @@
         </material>
       </visual>
       <collision name="dock_plate_1_c">
-        <pose>1.055 -3.77 0.02 0 0 0</pose>
+        <pose>1.055 -3.72 0.02 0 0 0</pose>
         <geometry><box><size>0.075 0.1 0.04</size></box></geometry>
       </collision>
       </link>
