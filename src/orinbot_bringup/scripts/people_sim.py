@@ -3,8 +3,10 @@
 
     ros2 run orinbot_bringup people_sim.py
 
-Moves pedestrians back and forth along corridors in the office world to create dynamic obstacle scenarios.
-Includes pause and turn-around behavior when robot approach is detected (within 1.4 m).
+Walks pedestrians up and down the office corridors as dynamic obstacles.
+They yield when the robot comes within 1.4 m and turn around if it does not
+clear. Waypoints are world coordinates, so the robot pose must come from a
+world-frame source.
 """
 
 import math
@@ -138,7 +140,11 @@ class People(Node):
     def __init__(self):
         super().__init__('people_sim')
         p = self.declare_parameter
-        p('robot_odom_topic', '/odom')
+        # Ground truth, not /odom: the waypoints below are world coordinates
+        # and /odom is relative to wherever the robot spawned, so the two
+        # frames differ by the spawn offset and yielding triggers in the
+        # wrong place.
+        p('robot_odom_topic', '/ground_truth/odom')
         odom_topic = self.get_parameter('robot_odom_topic').value
 
         self.robot = None
