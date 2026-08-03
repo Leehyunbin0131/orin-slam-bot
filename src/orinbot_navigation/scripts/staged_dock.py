@@ -56,7 +56,7 @@ class StagedDock(Node):
         # 180도 회전 지점까지의 거리 [m]. 제약은 섀시가 아니라 **캐스터**
         # 입니다 — 회전 반지름 0.198 m 에 구 반지름이 0.030 m 뿐이라
         # 높이 0.040 m 인 동판 턱에 걸립니다. docking.yaml 주석 참고.
-        p('rotate_distance', 0.50)
+        p('rotate_distance', 0.55)
         # 회전점 허용 오차 [m]. 이 안에 들면 더 보정하지 않습니다.
         p('rotate_tolerance', 0.02)
         # Distance from marker surface to approach staging pose [m]

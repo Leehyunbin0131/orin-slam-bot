@@ -228,7 +228,7 @@ staged_dock:
     # 캐스터 여유가 328 mm 로 벌어집니다. 후진량은 고정이 아니라 그때 잰
     # 거리에서 dock_distance 를 뺀 값이라, 회전점 오차가 도크로 옮겨가지
     # 않습니다.
-    rotate_distance: 0.50
+    rotate_distance: 0.55
     # 회전점 허용 오차 [m]. 0.70 m 에서 마커 거리 정확도가 ±1.4 mm 라
     # 여유가 열 배입니다.
     rotate_tolerance: 0.02
