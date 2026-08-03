@@ -1,6 +1,6 @@
 # orinbot — ROS 2 Jazzy + Gazebo Harmonic 시뮬레이션 워크스페이스
 
-시뮬레이션 환경에서 로봇 제어 및 자율주행 스택을 개발하되, 실기 배치 시 시뮬레이션과 실물 로봇이 **동일한 인터페이스**를 갖도록 구성한 ROS 2 워크스페이스입니다.
+시뮬레이션 환경에서 로봇 제어 및 자율주행 스택을 개발하되, 실물 로봇 배포 시 시뮬레이션과 실물 로봇이 **동일한 인터페이스**를 갖도록 구성한 ROS 2 워크스페이스입니다.
 
 배포 타깃은 **Jetson Orin Nano Super**(6코어 A78AE + 8GB 통합 메모리)입니다.
 
@@ -8,13 +8,13 @@
 ros2 launch orinbot_navigation navigation.launch.py
 ```
 
-![Gazebo Harmonic 에서 실행 중인 room.sdf 월드](docs/images/gazebo-room.png)
+![Gazebo Harmonic에서 실행 중인 room.sdf 월드](docs/images/gazebo-room.png)
 
 *`room.sdf` (10 × 8 m) — 벽마다 고유 텍스처를 입혀 시각 오도메트리의 특징점을 만듭니다. 칸막이와 통로, 높이가 다른 선반 3종, 낮은 장애물이 배치되어 있습니다.*
 
 ![RViz — RTAB-Map 지도와 Nav2 코스트맵](docs/images/rviz-navigation.png)
 
-*프론티어 자동 탐사로 방 전체를 매핑한 직후 (206초 완주). 검정이 점유 격자, 빨강이 라이다 스캔, 청록·보라가 로컬 코스트맵 팽창이며 왼쪽 아래는 VSLAM 입력 컬러 영상입니다.*
+*프론티어 자동 탐사로 방 전체를 매핑한 직후 (206초 완주). 검은색은 점유 격자, 빨간색은 라이다 스캔, 청록·보라색은 로컬 코스트맵 팽창 영역이며 왼쪽 아래는 VSLAM 입력 컬러 영상입니다.*
 
 ## 목차
 
@@ -49,14 +49,14 @@ ros2 launch orinbot_navigation navigation.launch.py
 
 ## 로봇 사양
 
-- **구동 방식**: 차동 구동 방식(Differential drive), 중앙 2개 구동륜
-- **캐스터**: 4개 (전방 2개, 후방 2개) — 마찰 없는 구체(Sphere) 모델링
+- **구동 방식**: 차동 구동(Differential Drive) 방식, 중앙 구동 바퀴 2개
+- **캐스터**: 4개 (전방 2개, 후방 2개) — 마찰이 없는 구체(Sphere)로 모델링
 - **섀시 외형**: 0.40 m 정육면체 (외접 반지름 **0.283 m**)
 - **비전 센서**: Intel RealSense D435i (전면, 15° 하향 피치) — RGB + Depth + IMU
 - **라이다**: RPLIDAR A2M12 (상단) — 360° 스캔 (지면 기준 스캔 평면 높이 0.49 m)
 
 로봇 기본 치수는 `orinbot_description/urdf/orinbot.urdf.xacro` 상단 파라미터 블록에 정의되어 있습니다.
-실기 치수 변경 시 해당 블록과 `orinbot_bringup/config/controllers.yaml`의 `wheel_separation`, `wheel_radius` 항목을 함께 수정해야 합니다.
+실물 로봇 치수 변경 시 해당 블록과 `orinbot_bringup/config/controllers.yaml`의 `wheel_separation`, `wheel_radius` 항목을 함께 수정해야 합니다.
 
 ## 패키지 구성
 
@@ -101,7 +101,7 @@ sudo apt update && sudo apt install -y \
 export ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST
 ```
 
-복수의 네트워크 인터페이스가 유효할 경우, FastDDS 멀티캐스트 디스커버리로 인해 Nav2 라이프사이클 상태 전이 서비스 응답이 지연되거나 중단될 수 있습니다. 디스커버리 범위를 `LOCALHOST`로 제한하여 이를 예방합니다.
+여러 네트워크 인터페이스가 활성화되어 있을 경우, FastDDS 멀티캐스트 디스커버리로 인해 Nav2 라이프사이클 상태 전이 서비스 응답이 지연되거나 중단될 수 있습니다. 디스커버리 범위를 `LOCALHOST`로 제한하여 이를 예방합니다.
 
 > ROS 2 Jazzy는 Gazebo Harmonic을 `ros-jazzy-gz-*-vendor` 패키지로 기본 제공하므로, osrfoundation 저장소를 별도로 추가할 필요가 없습니다.
 
@@ -117,9 +117,9 @@ source install/setup.bash
 ## 실행
 
 이 절은 **시뮬레이터만** 띄우는 방법입니다 — 모델 확인, 월드 점검, 수동 조종용입니다.
-자율주행까지 한 번에 올리려면 [자율주행 (VSLAM + Nav2)](#자율주행-vslam--nav2) 절의
-`navigation.launch.py` 를 쓰세요. 그쪽이 아래 `sim.launch.py` 를 포함해 SLAM·Nav2·도킹까지
-순서대로 띄웁니다.
+자율주행까지 한 번에 실행하려면 [자율주행 (VSLAM + Nav2)](#자율주행-vslam--nav2) 절의
+`navigation.launch.py`를 사용하십시오. 이 런치 파일이 아래 `sim.launch.py`를 포함하여 SLAM, Nav2, 도킹 노드까지
+순서대로 실행합니다.
 
 ### 시뮬레이션 실행
 
@@ -174,11 +174,11 @@ ros2 run orinbot_bringup people_sim.py --ros-args -p use_sim_time:=true
 
 | 객체 | 이동 속도 | 동작 특성 |
 |---|---|---|
-| `person_0` | 1.20 m/s | 고속 주행 |
-| `person_1` | 0.55 m/s | 저속 주행 (경로 끝 6초 정지) |
-| `person_2` | 0.85 m/s | 표준 속도 주행 |
+| `person_0` | 1.20 m/s | 고속 보행 |
+| `person_1` | 0.55 m/s | 저속 보행 (경로 끝 6초 정지) |
+| `person_2` | 0.85 m/s | 표준 속도 보행 |
 
-보행자는 로봇이 진행 방향 ±75° 이내 1.4 m 진입 시 정지하며, 1.8 m 이격 시 재개합니다. 12초 이상 대기 시 반대 방향으로 회차합니다.
+보행자는 로봇이 진행 방향 ±75° 이내 1.4 m 진입 시 정지하며, 1.8 m 이격 시 재개합니다. 12초 이상 대기 시 반대 방향으로 돌아서 이동합니다.
 
 ### 모델 확인 및 키보드 원격 조종
 
@@ -243,7 +243,7 @@ map --(rtabmap)--> vodom --(rgbd_odometry)--> odom --(EKF)--> base_footprint
 
 ## 실물 로봇 전환 가이드
 
-`orinbot_description/urdf/orinbot.ros2_control.xacro` 내 `<hardware>` 블록을 사용자 커스텀 `hardware_interface` 플러그인으로 교체하면, 상위 제어 및 항법 스택(Nav2, 노드 등) 변경 없이 실기 환경으로 이식 가능합니다.
+`orinbot_description/urdf/orinbot.ros2_control.xacro` 내 `<hardware>` 블록을 사용자 커스텀 `hardware_interface` 플러그인으로 교체하면, 상위 제어 및 항법 스택(Nav2, 노드 등) 변경 없이 실물 로봇 환경으로 이식할 수 있습니다.
 
 ## 자율주행 (VSLAM + Nav2)
 
@@ -263,7 +263,7 @@ ros2 launch orinbot_navigation navigation.launch.py localization:=true
 # 헤드리스 실행 (GUI 미사용)
 ros2 launch orinbot_navigation navigation.launch.py gui:=false use_rviz:=false
 
-# SLAM + Nav2 단독 기동 (시뮬레이터 이미 실행 중인 경우)
+# SLAM + Nav2 단독 기동 (시뮬레이터가 이미 실행 중인 경우)
 ros2 launch orinbot_navigation navigation.launch.py use_sim:=false
 
 # 자동 탐사 노드 단독 추가
@@ -298,7 +298,7 @@ ros2 action send_goal /undock_robot nav2_msgs/action/UndockRobot "{}"
 
 ### 런타임 필수 점검
 
-시뮬레이션 기동 후 `/clock` 발행자 수검증:
+시뮬레이션 기동 후 `/clock` 발행자 수 검증:
 
 ```bash
 ros2 topic info /clock | grep Publisher
