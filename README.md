@@ -5,7 +5,6 @@
 배포 타깃은 **Jetson Orin Nano Super**(6코어 A78AE + 8GB 통합 메모리)입니다.
 
 ```bash
-# 평소에는 이것 하나면 됩니다 (시뮬 + SLAM + Nav2 + 도킹)
 ros2 launch orinbot_navigation navigation.launch.py
 ```
 
