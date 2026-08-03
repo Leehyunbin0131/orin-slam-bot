@@ -25,6 +25,7 @@ ros2 launch orinbot_navigation navigation.launch.py
 - **[실행](#실행)** — **여기부터 보십시오**
   - [한눈에 보기](#한눈에-보기) — 무엇을 하려면 어떤 명령인가
   - [임무 모드](#임무-모드--주-진입점) — 도크 대기 → 명령 → 수행 → 복귀
+  - [그 밖의 실행 방법](#그-밖의-실행-방법) · [주요 실행 인자](#주요-실행-인자) · [런타임 필수 점검](#런타임-필수-점검)
   - [배치 3가지](#배치-3가지--무엇이-어느-기계에서-도는가) — PC 단독 / 분산(PC+Orin) / 실기 단독
 - [시뮬레이터 · 월드 · 예제](#시뮬레이터--월드--예제)
   - [시뮬레이션 실행](#시뮬레이션-실행)
@@ -33,10 +34,6 @@ ros2 launch orinbot_navigation navigation.launch.py
   - [예제 노드](#예제-노드)
 - [인터페이스](#인터페이스) — 토픽·액션 목록, [TF 구조](#tf-구조)
 - [실물 로봇 전환 가이드](#실물-로봇-전환-가이드)
-- [자율주행 (VSLAM + Nav2)](#자율주행-vslam--nav2) — 인자와 점검
-  - [실행 옵션](#실행-옵션)
-  - [주요 실행 인자](#주요-실행-인자)
-  - [런타임 필수 점검](#런타임-필수-점검)
 - [시스템 핵심 구성 및 사양](#시스템-핵심-구성-및-사양)
   - [위치 추정 및 코스트맵](#위치-추정-및-코스트맵)
   - [경로 계획 및 제어 설정](#경로-계획-및-제어-설정)
@@ -203,6 +200,76 @@ ros2 service call /auto_dock/return std_srvs/srv/Trigger   # 도크로 복귀
 **다시 띄우기 전에** 잔여 프로세스를 확인하십시오 — 남아 있으면 `/clock` 이 두 곳에서 발행되어 모든 노드의 TF 조회가 깨집니다. 확인과 정리 방법은 [런타임 필수 점검](#런타임-필수-점검)에 있습니다.
 
 기동 중 `Nav2 PAUSE failed` 나 `bt_navigator: unconfigured` 가 보이면 라이프사이클 기동이 실패한 것이니 그 회차는 버리고 다시 띄우십시오 ([Nav2 라이프사이클 워치독](CLAUDE.md) 참고).
+
+---
+
+### 그 밖의 실행 방법
+
+임무 관리자 없이 자율주행 스택만 다루고 싶을 때 씁니다.
+
+```bash
+# 프론티어 자동 탐사 및 지도 생성 (임무 명령 없이 바로 탐사)
+ros2 launch orinbot_navigation navigation.launch.py explore:=true
+
+# 기존 지도 기반 위치 추정 전용 모드
+ros2 launch orinbot_navigation navigation.launch.py localization:=true
+
+# 헤드리스 실행 (GUI 미사용)
+ros2 launch orinbot_navigation navigation.launch.py gui:=false use_rviz:=false
+
+# SLAM + Nav2 단독 기동 (시뮬레이터가 이미 실행 중인 경우)
+ros2 launch orinbot_navigation navigation.launch.py use_sim:=false
+
+# 자동 탐사 노드 단독 추가 (스택이 이미 떠 있을 때)
+ros2 launch orinbot_navigation explore.launch.py
+
+# 충전 도킹 액션 직접 호출
+ros2 action send_goal /dock_robot nav2_msgs/action/DockRobot "{use_dock_id: true, dock_id: home_dock}"
+ros2 action send_goal /undock_robot nav2_msgs/action/UndockRobot "{}"
+```
+
+### 주요 실행 인자
+
+`navigation.launch.py` 와 `mission.launch.py` 가 공유합니다.
+
+| 인자 | 기본값 | 설명 |
+|---|---|---|
+| `world` | `room.sdf` | 월드 파일 선택 |
+| `database_path` | `~/.ros/orinbot_rtabmap.db` | RTAB-Map DB 파일 경로 |
+| `x` `y` `yaw` | `1.0` `-3.64` `1.5708` | 로봇 스폰 자세 (기본값 = 도킹 완료 자세) |
+| `explore` | `false` | 자동 탐사 노드 기동 여부 |
+| `explore_paused` | `false` | 탐사를 멈춘 채로 시작 (임무 관리자가 켤 때까지) |
+| `localization` | `false` | 위치 추정 전용 모드 (지도 갱신 비활성화) |
+| `use_sim` | `true` | Gazebo 시뮬레이터 동시 실행 여부 |
+| `use_rviz` / `gui` | `true` | RViz / Gazebo GUI 표시 여부 |
+| `use_vslam` | `true` | Visual Odometry 활성화 여부 |
+| `detection_rate` | `2.0` | RTAB-Map 노드 추가 주기 [Hz] |
+| `memory_thr` | `3000` | 작업 메모리 노드 제한 (0=무제한) |
+| `map_3d` | `false` | 3D 점유 격자 생성 여부 |
+| `reg_strategy` | `2` | 루프 클로저 검증 방식 (0=Vis, 2=Vis+ICP) |
+| `dock` | `true` | 충전 도킹 스택 실행 여부 |
+| `docking_mode` | `staged` | 도킹 방식 선택 (`staged` \| `smooth`) |
+| `auto_dock` | `true` | 배터리 잔량 기반 자동 도킹 활성화 여부 |
+| `dock_register` | `true` | 도크에 붙은 채 부팅하면 도크 좌표 자동 등록 |
+| `clock_rate` | `100.0` | `/clock` 발행 주기 [Hz] |
+| `battery_speedup` | `1.0` | 배터리 방전/충전 배속 |
+| `initial_soc` | `0.85` | 초기 배터리 잔량 (0.0 ~ 1.0) |
+
+### 런타임 필수 점검
+
+기동 후 `/clock` 발행자 수를 확인합니다.
+
+```bash
+ros2 topic info /clock | grep Publisher
+```
+
+`Publisher count: 1` 이어야 합니다. **2 이상이면 잔여 `parameter_bridge` 가 새 Gazebo 에 스스로 붙은 것이고**, 타임스탬프가 꼬여 모든 노드에서 TF 버퍼가 계속 비워집니다. 증상은 "간헐적 정지"로만 보입니다.
+
+```bash
+ps -eo pid,args | grep -E '/opt/ros/jazzy|ros2_ws/install|[g]z sim' \
+  | grep -v shell-snapshots | awk -v me=$$ '$1 != me {print $1}' | xargs -r kill -9
+ros2 daemon stop
+```
 
 ---
 
@@ -427,71 +494,6 @@ map --(rtabmap)--> vodom --(rgbd_odometry)--> odom --(EKF)--> base_footprint
 ## 실물 로봇 전환 가이드
 
 `orinbot_description/urdf/orinbot.ros2_control.xacro` 내 `<hardware>` 블록을 사용자 커스텀 `hardware_interface` 플러그인으로 교체하면, 상위 제어 및 항법 스택(Nav2, 노드 등) 변경 없이 실물 로봇 환경으로 이식할 수 있습니다.
-
-## 자율주행 (VSLAM + Nav2)
-
-실행 방법은 [실행](#실행) 절에 모아 두었습니다. 여기는 **인자와 점검 항목**입니다.
-
-### 실행 옵션
-
-```bash
-# 프론티어 자동 탐사 및 지도 생성 (임무 관리자 없이 바로 탐사)
-ros2 launch orinbot_navigation navigation.launch.py explore:=true
-
-# 기존 지도 기반 위치 추정 전용 모드
-ros2 launch orinbot_navigation navigation.launch.py localization:=true
-
-# 헤드리스 실행 (GUI 미사용)
-ros2 launch orinbot_navigation navigation.launch.py gui:=false use_rviz:=false
-
-# SLAM + Nav2 단독 기동 (시뮬레이터가 이미 실행 중인 경우)
-ros2 launch orinbot_navigation navigation.launch.py use_sim:=false
-
-# 자동 탐사 노드 단독 추가
-ros2 launch orinbot_navigation explore.launch.py
-
-# 충전 도킹 명령어 테스트
-ros2 action send_goal /dock_robot nav2_msgs/action/DockRobot "{use_dock_id: true, dock_id: home_dock}"
-ros2 action send_goal /undock_robot nav2_msgs/action/UndockRobot "{}"
-```
-
-### 주요 실행 인자
-
-| 인자 | 기본값 | 설명 |
-|---|---|---|
-| `world` | `room.sdf` | 월드 파일 선택 |
-| `database_path` | `~/.ros/orinbot_rtabmap.db` | RTAB-Map DB 파일 경로 |
-| `explore` | `false` | 자동 탐사 노드 기동 여부 |
-| `localization` | `false` | 위치 추정 전용 모드 (지도 갱신 비활성화) |
-| `use_sim` | `true` | Gazebo 시뮬레이터 동시 실행 여부 |
-| `use_rviz` / `gui` | `true` | RViz / Gazebo GUI 표시 여부 |
-| `use_vslam` | `true` | Visual Odometry 활성화 여부 |
-| `detection_rate` | `2.0` | RTAB-Map 노드 추가 주기 [Hz] |
-| `memory_thr` | `3000` | 작업 메모리 노드 제한 (0=무제한) |
-| `map_3d` | `false` | 3D 점유 격자 생성 여부 |
-| `reg_strategy` | `2` | 루프 클로저 검증 방식 (0=Vis, 2=Vis+ICP) |
-| `dock` | `true` | 충전 도킹 스택 실행 여부 |
-| `docking_mode` | `staged` | 도킹 방식 선택 (`staged` \| `smooth`) |
-| `auto_dock` | `true` | 배터리 잔량 기반 자동 도킹 활성화 여부 |
-| `clock_rate` | `100.0` | `/clock` 발행 주기 [Hz] |
-| `battery_speedup` | `1.0` | 배터리 방전/충전 배속 |
-| `initial_soc` | `0.85` | 초기 배터리 잔량 (0.0 ~ 1.0) |
-
-### 런타임 필수 점검
-
-시뮬레이션 기동 후 `/clock` 발행자 수 검증:
-
-```bash
-ros2 topic info /clock | grep Publisher
-```
-
-`Publisher count: 1` 상태여야 합니다. 2 이상일 경우 잔여 `parameter_bridge` 프로세스를 종료해야 합니다:
-
-```bash
-ps -eo pid,args | grep -E '/opt/ros/jazzy|ros2_ws/install|[g]z sim' \
-  | grep -v shell-snapshots | awk -v me=$$ '$1 != me {print $1}' | xargs -r kill -9
-ros2 daemon stop
-```
 
 ## 시스템 핵심 구성 및 사양
 
