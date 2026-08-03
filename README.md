@@ -8,6 +8,14 @@
 ros2 launch orinbot_navigation navigation.launch.py
 ```
 
+![Gazebo Harmonic 에서 실행 중인 room.sdf 월드](docs/images/gazebo-room.png)
+
+*`room.sdf` (10 × 8 m) — 벽마다 고유 텍스처를 입혀 시각 오도메트리의 특징점을 만듭니다. 칸막이와 통로, 높이가 다른 선반 3종, 낮은 장애물이 배치되어 있습니다.*
+
+![RViz — RTAB-Map 지도와 Nav2 코스트맵](docs/images/rviz-navigation.png)
+
+*프론티어 자동 탐사로 방 전체를 매핑한 직후 (206초 완주). 검정이 점유 격자, 빨강이 라이다 스캔, 청록·보라가 로컬 코스트맵 팽창이며 왼쪽 아래는 VSLAM 입력 컬러 영상입니다.*
+
 ## 목차
 
 - [문서](#문서)
