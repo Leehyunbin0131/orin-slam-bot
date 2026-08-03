@@ -286,7 +286,7 @@ for _p in _people:
 # 후진 도킹은 회전점에서 180도 돌아 뒤로 들어갑니다 — 충전 내내 카메라가
 # 벽이 아니라 방을 보므로 시각 오도메트리가 살아 있습니다. 다만 접촉
 # 판정이 아직 안 맞아 기본은 전진입니다.
-REVERSE_DOCK = False
+REVERSE_DOCK = True
 DOCK_X, DOCK_ROBOT_Y = 1.0, (-3.67 if REVERSE_DOCK else -3.60)
 DOCK_WALL_Y = Y0 + WALL_T / 2.0
 DOCK_PANEL_T, DOCK_PANEL_W, DOCK_PANEL_H = 0.05, 0.52, 0.45

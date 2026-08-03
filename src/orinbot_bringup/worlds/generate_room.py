@@ -567,7 +567,7 @@ _panel_front = DOCK_WALL_Y + DOCK_PANEL_T               # -3.90
 # 후진 도킹은 회전점에서 180도 돌아 뒤로 들어갑니다 — 충전 내내 카메라가
 # 벽이 아니라 방을 보므로 시각 오도메트리가 살아 있습니다. 다만 접촉
 # 판정이 아직 안 맞아 기본은 전진입니다.
-REVERSE_DOCK = False
+REVERSE_DOCK = True
 DOCK_ROBOT_Y = -3.67 if REVERSE_DOCK else -3.60
 DOCK_CAM_REACH = 0.2125                 # orinbot.urdf.xacro: base_length/2 + 0.0125
 # 마커판은 패널 앞면보다 2 mm 파묻습니다. 면을 정확히 맞추면 두 면이

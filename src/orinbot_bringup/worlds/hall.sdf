@@ -1724,7 +1724,7 @@
         </material>
       </visual>
       <visual name="dock_plate_0">
-        <pose>0.945 -3.5 0.02 0 0 0</pose>
+        <pose>0.945 -3.77 0.02 0 0 0</pose>
         <geometry><box><size>0.075 0.1 0.04</size></box></geometry>
         <material>
           <ambient>0.72 0.45 0.2 1</ambient>
@@ -1733,11 +1733,11 @@
         </material>
       </visual>
       <collision name="dock_plate_0_c">
-        <pose>0.945 -3.5 0.02 0 0 0</pose>
+        <pose>0.945 -3.77 0.02 0 0 0</pose>
         <geometry><box><size>0.075 0.1 0.04</size></box></geometry>
       </collision>
       <visual name="dock_plate_1">
-        <pose>1.055 -3.5 0.02 0 0 0</pose>
+        <pose>1.055 -3.77 0.02 0 0 0</pose>
         <geometry><box><size>0.075 0.1 0.04</size></box></geometry>
         <material>
           <ambient>0.72 0.45 0.2 1</ambient>
@@ -1746,7 +1746,7 @@
         </material>
       </visual>
       <collision name="dock_plate_1_c">
-        <pose>1.055 -3.5 0.02 0 0 0</pose>
+        <pose>1.055 -3.77 0.02 0 0 0</pose>
         <geometry><box><size>0.075 0.1 0.04</size></box></geometry>
       </collision>
       </link>

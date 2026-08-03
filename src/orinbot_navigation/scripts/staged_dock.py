@@ -53,15 +53,18 @@ class StagedDock(Node):
         # 뒤로 들어갑니다. 충전 내내 카메라가 벽이 아니라 방을 보게 하려는
         # 것입니다 — 벽 0.3 m 앞에서는 시각 오도메트리가 깨집니다.
         p('reverse_dock', True)
-        # 180도 회전 지점까지의 거리 [m]. 제자리 회전에 외접반경 0.283 m 가
-        # 필요하므로 이보다 가까이서 돌면 패널을 칩니다.
-        p('rotate_distance', 0.30)
+        # 180도 회전 지점까지의 거리 [m]. 제약은 섀시가 아니라 **캐스터**
+        # 입니다 — 회전 반지름 0.198 m 에 구 반지름이 0.030 m 뿐이라
+        # 높이 0.040 m 인 동판 턱에 걸립니다. docking.yaml 주석 참고.
+        p('rotate_distance', 0.50)
+        # 회전점 허용 오차 [m]. 이 안에 들면 더 보정하지 않습니다.
+        p('rotate_tolerance', 0.02)
         # Distance from marker surface to approach staging pose [m]
         p('approach_distance', 0.65)
 
         # Alignment criteria
         # Budgeted contact lateral error [m] (half of physical copper pad tolerance +-34mm)
-        p('contact_lateral_budget', 0.015)
+        p('contact_lateral_budget', 0.006)
         # Yaw threshold limit [rad] for error anomaly monitoring
         p('yaw_tolerance', 0.0175)        # 1.0 deg
         p('max_align_iters', 6)
@@ -74,6 +77,10 @@ class StagedDock(Node):
         p('crab_angle', 0.5236)           # 30 deg
         p('v_rotate', 0.35)               # [rad/s]
         p('v_forward', 0.08)              # [m/s]
+        # 목표 직전 미세 접근 속도 [m/s] 와 정지 데드밴드 [m].
+        # 둘이 함께 세로 오차의 하한을 정합니다.
+        p('v_creep', 0.01)
+        p('forward_tolerance', 0.0005)
         p('settle_time', 0.7)             # Settling time after stopping [s]
         p('measure_samples', 12)
         p('measure_timeout', 5.0)
@@ -96,6 +103,7 @@ class StagedDock(Node):
         self.D = g('dock_distance')
         self.reverse = g('reverse_dock')
         self.R = g('rotate_distance')
+        self.rot_tol = g('rotate_tolerance')
         # 정렬 뒤 직진해서 멈출 지점 — 후진 도킹이면 회전점입니다.
         self.stop_at = self.R if self.reverse else self.D
         self.A = g('approach_distance')
@@ -107,6 +115,8 @@ class StagedDock(Node):
         self.crab = g('crab_angle')
         self.w_rot = g('v_rotate')
         self.v_fwd = g('v_forward')
+        self.v_creep = g('v_creep')
+        self.fwd_tol = g('forward_tolerance')
         self.settle = g('settle_time')
         self.n_samples = int(g('measure_samples'))
         self.meas_timeout = g('measure_timeout')
@@ -195,7 +205,7 @@ class StagedDock(Node):
 
     def predict(self, fwd, lat, psi):
         """Predict expected contact lateral error [m] when proceeding straight."""
-        return lat - max(0.0, fwd - self.stop_at) * math.sin(psi)
+        return lat - max(0.0, fwd - self.D) * math.sin(psi)
 
     # ---------------- Maneuver ----------------
     def rotate(self, delta):
@@ -229,9 +239,12 @@ class StagedDock(Node):
             x, y, _ = self._odom_pose()
             traveled = math.hypot(x - x0, y - y0)
             err = target - traveled
-            if err <= 0.002:
+            if err <= self.fwd_tol:
                 break
-            v = max(0.02, min(self.v_fwd, err * 1.0)) * sign
+            # 최저 속도가 정지 분해능을 정합니다 — 제어 주기 0.02 s 이므로
+            # 0.02 m/s 면 한 틱에 0.4 mm 를 더 갑니다. 세로 오차의 바닥이
+            # 여기라 데드밴드와 함께 낮춥니다.
+            v = max(self.v_creep, min(self.v_fwd, err * 1.0)) * sign
             self._drive(v, 0.0)
             time.sleep(0.02)
         self._stop()
@@ -364,13 +377,34 @@ class StagedDock(Node):
             self.forward(run)
 
         if self.reverse:
-            # 회전점에 섰습니다. 여기서 180도 돌고 짧게 후진해 들어갑니다.
-            # 회전은 마커가 아니라 오도메트리로 닫습니다 — 돌고 나면 마커가
-            # 뒤에 있어 볼 수 없습니다. 짧은 회전의 휠 오도메트리는 0.23도
-            # 분해능이고, 남은 후진이 0.08 m 라 흘러감은 mm 수준입니다.
-            back = max(0.0, self.R - self.D)
+            # 회전점을 마커로 닫습니다. 0.70 m 는 검출 절벽(0.55 m) 위라
+            # 여기서도 마커가 보이고 거리 정확도가 ±1.4 mm 입니다.
+            # 회전 중 캐스터(스윕 반지름 0.198 m, 구 반지름 0.030 m)가 높이
+            # 0.040 m 인 동판 턱을 넘지 못하므로 회전점이 흔들리면 걸립니다.
+            here = None
+            for _ in range(3):
+                m = self.measure()
+                if m is None:
+                    break
+                here = m[0]
+                adj = here - self.R
+                if abs(adj) <= self.rot_tol:
+                    break
+                self.get_logger().info(
+                    '회전점 보정 %+.0f mm (측정 %.3f m, 목표 %.3f ±%.0f mm)'
+                    % (adj * 1000, here, self.R, self.rot_tol * 1000))
+                self.forward(adj)
+            if here is None:
+                here = self.R
+                self.get_logger().warning(
+                    '회전점에서 마커 미검출 — 오도메트리 값 %.3f m 로 진행합니다'
+                    % here)
+            # **후진량은 고정값이 아니라 방금 잰 거리에서 뺍니다.** 회전 뒤에는
+            # 마커가 뒤에 있어 보정할 수 없으므로, 여기서 남은 오차를 그대로
+            # 후진량에 반영해야 도크까지 옮겨가지 않습니다.
+            back = max(0.0, here - self.D)
             self.get_logger().info(
-                '회전점 도달 — 180도 회전 후 %.3f m 후진합니다' % back)
+                '회전점 %.3f m — 180도 회전 후 %.3f m 후진합니다' % (here, back))
             self.rotate(math.pi)
             if back > 0.001:
                 self.forward(-back)
