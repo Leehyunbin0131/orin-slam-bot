@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""Staged control based docking and undocking server.
+"""단계 분리 도킹/언도킹 서버.
 
     /dock_robot   (nav2_msgs/DockRobot)
     /undock_robot (nav2_msgs/UndockRobot)
 
-Complies with opennav_docking interface standard while maintaining stationary vision measurement precision.
-Executes lateral crab maneuvers and final straight-line entry.
+액션 규격은 opennav_docking 과 같지만, 곡선으로 붙는 대신 정지 -> 측정 ->
+보정 -> 정지 -> 재측정 을 반복해 **정지 상태의 인식 정확도를 그대로 최종
+자세로 옮깁니다.** 횡오차는 차동구동이 옆으로 못 가므로 크랩 기동으로
+없앱니다. 설계 근거는 docs/ros2-lessons.md 6장.
 """
 
 import math
@@ -42,10 +44,10 @@ class StagedDock(Node):
         p = self.declare_parameter
         self.cb = ReentrantCallbackGroup()
 
-        # Target dock pose (must match home_dock.pose in docking.yaml)
+        # 도크 자세 — docking.yaml 의 home_dock.pose 와 일치해야 합니다
         p('dock_id', 'home_dock')
         p('dock_x', 1.0)
-        p('dock_y', -3.60)
+        p('dock_y', -3.67)
         p('dock_yaw', -1.5708)
         # 마커면에서 최종 도킹 자세까지 [m]
         p('dock_distance', 0.224)
@@ -59,32 +61,32 @@ class StagedDock(Node):
         p('rotate_distance', 0.55)
         # 회전점 허용 오차 [m]. 이 안에 들면 더 보정하지 않습니다.
         p('rotate_tolerance', 0.02)
-        # Distance from marker surface to approach staging pose [m]
+        # 마커면에서 정렬 지점까지 [m]
         p('approach_distance', 0.65)
 
-        # Alignment criteria
-        # Budgeted contact lateral error [m] (half of physical copper pad tolerance +-34mm)
+        # 정렬 판정 — 축별이 아니라 접촉 시점 예상 횡오차 하나로 합니다
+        # (동판 허용 ±34 mm 의 일부를 예산으로 잡음). docking.yaml 참고.
         p('contact_lateral_budget', 0.006)
-        # Yaw threshold limit [rad] for error anomaly monitoring
-        p('yaw_tolerance', 0.0175)        # 1.0 deg
+        # 각도 상한 [rad]. 정밀도가 아니라 측정 이상 감시용입니다.
+        p('yaw_tolerance', 0.0175)        # 1.0도
         p('max_align_iters', 6)
         # 마커가 안 보일 때 한 번에 물러나는 거리 [m]
         p('search_backoff', 0.15)
-        # Minimum standoff distance from dock station
+        # 정렬에 필요한 도크와의 최소 여유 [m]
         p('min_standoff', 0.62)
 
-        # Maneuver parameters
-        p('crab_angle', 0.5236)           # 30 deg
+        # 기동 파라미터
+        p('crab_angle', 0.5236)           # 30도
         p('v_rotate', 0.35)               # [rad/s]
         p('v_forward', 0.08)              # [m/s]
         # 목표 직전 미세 접근 속도 [m/s] 와 정지 데드밴드 [m].
         # 둘이 함께 세로 오차의 하한을 정합니다.
         p('v_creep', 0.01)
         p('forward_tolerance', 0.0005)
-        p('settle_time', 0.7)             # Settling time after stopping [s]
+        p('settle_time', 0.7)             # 정지 후 안정화 대기 [s]
         p('measure_samples', 12)
         p('measure_timeout', 5.0)
-        p('undock_distance', 0.5)         # Backing out distance [m]
+        p('undock_distance', 0.5)         # 이탈 주행 거리 [m]
 
         # 도킹 구간에 멈출 것들 (std_srvs/Empty). 실기에서 카메라 스트림을
         # 끊는 서비스가 생기면 여기에 이름만 추가하면 됩니다.
@@ -241,9 +243,9 @@ class StagedDock(Node):
             err = target - traveled
             if err <= self.fwd_tol:
                 break
-            # 최저 속도가 정지 분해능을 정합니다 — 제어 주기 0.02 s 이므로
-            # 0.02 m/s 면 한 틱에 0.4 mm 를 더 갑니다. 세로 오차의 바닥이
-            # 여기라 데드밴드와 함께 낮춥니다.
+            # 최저 속도가 정지 분해능을 정합니다 — 제어 주기가 0.02 s 이므로
+            # 한 틱에 v_creep * 0.02 만큼 더 갑니다. 세로 오차의 바닥이 여기라
+            # 데드밴드(forward_tolerance)와 함께 정해야 합니다.
             v = max(self.v_creep, min(self.v_fwd, err * 1.0)) * sign
             self._drive(v, 0.0)
             time.sleep(0.02)
@@ -287,11 +289,11 @@ class StagedDock(Node):
         self._face_dock()
         self._restore_standoff()
 
-        # 여기서부터 지도 갱신과 시각 오도메트리를 얼립니다.
+        # 여기서부터 지도 갱신과 시각 오도메트리 보정을 얼립니다.
         # 카메라가 벽을 0.3~0.9 m 앞에서 보며 제자리 회전과 크랩을 반복하는
         # 구간이라 시각 오도메트리가 깨지고, 그 오차가 포즈 그래프에 그대로
-        # 들어갑니다 (실측: 도킹 한 사이클에 자세 오차 2 mm -> 935 mm).
-        # 도킹은 odom 기준이고 이동량도 1 m 미만이라 휠+IMU 로 충분합니다.
+        # 들어가 지도를 망칩니다. 도킹은 odom 기준이고 이동량도 1 m 미만이라
+        # 이 구간은 휠+IMU 로 충분합니다.
         self._freeze_slam(True)
 
         # Stages 2-4: Measure -> Align yaw -> Crab correction -> Remeasure
@@ -306,9 +308,9 @@ class StagedDock(Node):
             m = self.measure()
             if m is None:
                 # 지도 좌표로 "충분히 멀다"고 판단하면 안 됩니다 — SLAM 오차가
-                # 수십 cm 면 실제로는 검출 절벽(0.55 m) 안쪽에 서 있게 됩니다
-                # (실측: 지도 0.70 m 인데 실제 0.53 m). 도크를 마주 본 상태이므로
-                # 뒤로 물러나면 마커가 화각에 다시 들어옵니다.
+                # 수십 cm 면 실제로는 검출 절벽(0.55 m) 안쪽에 서 있을 수
+                # 있습니다. 도크를 마주 본 상태이므로 뒤로 물러나면 마커가
+                # 화각에 다시 들어옵니다.
                 self.get_logger().warning(
                     '마커 미검출 (%d회) — %.2f m 물러나 다시 봅니다'
                     % (i + 1, self.search_back))
@@ -377,10 +379,11 @@ class StagedDock(Node):
             self.forward(run)
 
         if self.reverse:
-            # 회전점을 마커로 닫습니다. 0.70 m 는 검출 절벽(0.55 m) 위라
-            # 여기서도 마커가 보이고 거리 정확도가 ±1.4 mm 입니다.
-            # 회전 중 캐스터(스윕 반지름 0.198 m, 구 반지름 0.030 m)가 높이
-            # 0.040 m 인 동판 턱을 넘지 못하므로 회전점이 흔들리면 걸립니다.
+            # 회전점을 마커로 닫습니다. rotate_distance 는 검출 절벽(로봇
+            # 중심 0.516 m) 위라 여기서도 마커가 보이고 거리 정확도가
+            # ±1.4 mm 입니다. 회전 중 캐스터(스윕 반지름 0.198 m, 구 반지름
+            # 0.030 m)가 높이 0.040 m 인 동판 턱을 넘지 못하므로 회전점이
+            # 흔들리면 걸립니다.
             here = None
             for _ in range(3):
                 m = self.measure()

@@ -277,11 +277,8 @@ DOCK_PLATE_L = 0.10
 DOCK_PLATE_Z = 0.04
 DOCK_PLATE_BACK = 0.10
 DOCK_COPPER = (0.72, 0.45, 0.20)
-# 후진 도킹 (generate_room.py 참고). 도킹 완료 시 로봇 중심.
-# 도킹 방향. docking.yaml 의 reverse_dock 과 반드시 같아야 합니다.
-# 후진 도킹은 회전점에서 180도 돌아 뒤로 들어갑니다 — 충전 내내 카메라가
-# 벽이 아니라 방을 보므로 시각 오도메트리가 살아 있습니다. 다만 접촉
-# 판정이 아직 안 맞아 기본은 전진입니다.
+# 도킹 방향. docking.yaml 의 reverse_dock 과 **반드시 같아야 합니다** —
+# 동판 위치가 이 값에 따라 앞뒤로 바뀝니다. 기하 근거는 generate_room.py.
 REVERSE_DOCK = True
 DOCK_ROBOT_Y = -3.67 if REVERSE_DOCK else -3.60
 

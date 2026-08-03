@@ -4,6 +4,15 @@
 
 배포 타깃은 **Jetson Orin Nano Super**(6코어 A78AE + 8GB 통합 메모리)입니다.
 
+## 문서
+
+| 문서 | 내용 |
+|---|---|
+| `README.md` (이 문서) | 설치, 실행, 인터페이스, 현재 구성 |
+| **`docs/ros2-lessons.md`** | **이 프로젝트에서 겪은 설계급 문제들** — 왜 문제였고 왜 그 해결법이 통했는지 |
+| `tools/README.md` | 성능 측정 도구와 기준선 수치 |
+| `CLAUDE.md` | 작업 지침 (지켜야 할 규칙과 현재 설정값) |
+
 ## 로봇 사양
 
 - **구동 방식**: 차동 구동 방식(Differential drive), 중앙 2개 구동륜
@@ -287,8 +296,15 @@ ros2 daemon stop
 
 | 방식 | 제어 알고리즘 | 특징 |
 |---|---|---|
-| `staged` (기본) | `scripts/staged_dock.py` | 정지-측정-보정 단계별 정밀 도킹 (정렬 오차 최소화) |
+| `staged` (기본) | `scripts/staged_dock.py` | 정지-측정-보정 단계 분리, 후진 접안 |
 | `smooth` | Nav2 순정 `opennav_docking` | 마커 실시간 추종 곡선 제어 |
 
-- **도크 검출**: ArUco `DICT_4X4_50` 마커 3장 보드 기반 자세 추정 (`dock_marker_board.py`)
+- **도크 검출**: ArUco `DICT_4X4_50` 마커 3장을 좌우 0.16 m 간격으로 벌려 하나의 보드로 자세 추정 (`dock_marker_board.py`)
+- **후진 접안**: 마커를 마주 본 채 정렬을 끝내고 회전점(마커면 0.55 m)에서 180° 회전 후 후진합니다. 충전 중 카메라가 벽이 아니라 방을 향하므로 시각 오도메트리가 유지됩니다.
+- **접촉 허용치**: 세로 ±48 mm / 가로 ±34 mm (포고핀 배열이 동판 위에 얹히는 범위)
 - **충전 절전 모드**: 도킹 완료 후 인지 및 항법 노드를 일시 정지(Lifecycle PAUSE / RTAB-Map pause)하여 전력 소모 관리
+
+```bash
+# 도킹 파라미터 스윕 (여러 초기 조건을 동시에 시험)
+python3 tools/dock_bench.py --jobs 4
+```

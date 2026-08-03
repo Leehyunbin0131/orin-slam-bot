@@ -97,9 +97,8 @@
 
 # ---- IMU ----
 # 실기 D435i 와 마찬가지로 자세(orientation)는 신뢰하지 말 것.
-# 자세를 만들어 쓰지 않습니다. EKF(ekf.yaml)가 이 토픽에서 자이로의 vyaw
-# 하나만 가져다 휠 엔코더와 융합합니다. 예전에 거치던 imu_filter_madgwick 은
-# 제거했습니다 — 이유는 ekf.yaml 주석 참고.
+# EKF(ekf.yaml)가 이 토픽에서 자이로의 vyaw 하나만 가져다 휠 엔코더와
+# 융합합니다. 자세 필터를 앞에 두지 않는 이유는 ekf.yaml 주석 참고.
 - ros_topic_name: "/camera/imu"
   gz_topic_name: "/camera/imu"
   ros_type_name: "sensor_msgs/msg/Imu"

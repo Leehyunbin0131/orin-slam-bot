@@ -239,7 +239,7 @@
        실기 D435i 는 컬러/뎁스/IR 을 동시에 내보낼 수 있고, 컬러가 있으면
        RTAB-Map 의 특징점 구별력이 올라가 잘못된 루프 클로저가 줄어듭니다.
        시뮬에서는 gz-sim 의 렌더링 스레드가 따라오는지가 관건이라
-       여기서 조절하며 실측합니다 (scratchpad/stream_rates.py). -->
+       여기서 조절하며 실측합니다 (tools/stream_rates.py). -->
   <xacro:property name="camera_color_rate" value="15"/>
   <!-- infra1 주기 [Hz]. 0 이면 끕니다.
        컬러 방식(RTAB-Map 이 color + aligned_depth 를 씀)에서는 쓰지 않습니다.
