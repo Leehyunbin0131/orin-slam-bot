@@ -25,6 +25,7 @@ ros2 launch orinbot_navigation navigation.launch.py
 - **[실행](#실행)** — **여기부터 보십시오**
   - [한눈에 보기](#한눈에-보기) — 무엇을 하려면 어떤 명령인가
   - [임무 모드](#임무-모드--주-진입점) — 도크 대기 → 명령 → 수행 → 복귀
+  - **[명령 목록](#명령-목록--ros2-service-call)** — `ros2 service call` 전부 한곳에
   - [그 밖의 실행 방법](#그-밖의-실행-방법) · [주요 실행 인자](#주요-실행-인자) · [런타임 필수 점검](#런타임-필수-점검)
   - [배치 3가지](#배치-3가지--무엇이-어느-기계에서-도는가) — PC 단독 / 분산(PC+Orin) / 실기 단독
 - [시뮬레이터 · 월드 · 예제](#시뮬레이터--월드--예제)
@@ -163,7 +164,7 @@ ros2 launch orinbot_navigation mission.launch.py
 [mission]:   임무 상태 → DOCKED
 ```
 
-**터미널 2 — 임무 명령**
+**터미널 2 — 명령** ([아래 목록](#명령-목록--ros2-service-call) 참고)
 
 ```bash
 ros2 service call /mission/start_mapping std_srvs/srv/Trigger   # 자동 매핑 시작
@@ -188,18 +189,98 @@ DOCKED → WAKING → UNDOCKING → RUNNING:mapping → RETURNING → DOCKED
 
 > **`DOCKED` 를 기다린 뒤에 임무 명령을 넣으세요.** 그 전에 넣으면 도크 상태 판정이 안 끝난 채로 순서가 꼬입니다. 복귀 명령도 언도킹이 끝난 뒤에 넣어야 합니다 — `RETURNING`/`UNDOCKING` 중에는 `이미 ... 중입니다` 로 거절됩니다.
 
-**도킹만 따로 돌려볼 때**는 임무 관리자를 건너뛰고 `auto_dock` 을 직접 부릅니다.
-
-```bash
-ros2 service call /auto_dock/leave  std_srvs/srv/Trigger   # 절전 해제 + 언도킹
-ros2 service call /auto_dock/return std_srvs/srv/Trigger   # 도크로 복귀
-```
-
 임무를 추가하는 자리는 `mission_manager.py` 의 `MISSIONS` 한 곳입니다. 항목과 실행 함수만 더하면 서비스가 자동으로 생기고, 깨우기·언도킹·복귀는 공통 절차라 다시 쓸 필요가 없습니다.
 
 **다시 띄우기 전에** 잔여 프로세스를 확인하십시오 — 남아 있으면 `/clock` 이 두 곳에서 발행되어 모든 노드의 TF 조회가 깨집니다. 확인과 정리 방법은 [런타임 필수 점검](#런타임-필수-점검)에 있습니다.
 
 기동 중 `Nav2 PAUSE failed` 나 `bt_navigator: unconfigured` 가 보이면 라이프사이클 기동이 실패한 것이니 그 회차는 버리고 다시 띄우십시오 ([Nav2 라이프사이클 워치독](CLAUDE.md) 참고).
+
+---
+
+### 명령 목록 — `ros2 service call`
+
+`mission.launch.py` 가 띄우는 노드들이 여는 서비스 전부입니다. 위쪽이 평소 쓰는 것이고, 아래로 갈수록 진단·수동 개입용입니다.
+
+#### 임무 — 평소 쓰는 것
+
+| 명령 | 타입 | 하는 일 |
+|---|---|---|
+| `/mission/start_mapping` | `std_srvs/srv/Trigger` | **자동 매핑 임무 시작.** 절전 해제 → 언도킹 → 탐사 → 복귀까지 한 사이클 |
+| `/mission/cancel` | `std_srvs/srv/Trigger` | 수행 중인 임무를 중단하고 **즉시 도크로 복귀** |
+
+```bash
+ros2 service call /mission/start_mapping std_srvs/srv/Trigger
+ros2 service call /mission/cancel        std_srvs/srv/Trigger
+```
+
+> 임무를 추가하면 `/mission/start_<임무이름>` 이 자동으로 생깁니다. 현재 가능한 임무는 기동 로그에 찍힙니다.
+
+#### 도킹 — 임무 없이 도크만 다룰 때
+
+| 명령 | 타입 | 하는 일 |
+|---|---|---|
+| `/auto_dock/leave` | `std_srvs/srv/Trigger` | 절전 해제 후 **언도킹**. 요청만 걸고 즉시 반환되므로 완료는 `/dock_state` 로 확인 |
+| `/auto_dock/return` | `std_srvs/srv/Trigger` | 도크로 **복귀**. 진입점 주행 + 마커 정렬 + 후진까지 |
+| `/dock_register/register` | `std_srvs/srv/Trigger` | **지금 자세를 도크 좌표로 등록.** 충전 중이 아니어도 강제로 등록합니다 (스테이션을 옮겼을 때) |
+
+```bash
+ros2 service call /auto_dock/leave       std_srvs/srv/Trigger
+ros2 service call /auto_dock/return      std_srvs/srv/Trigger
+ros2 service call /dock_register/register std_srvs/srv/Trigger
+```
+
+> `/auto_dock/*` 는 `/dock_state` 가 `RETURNING`/`UNDOCKING` 인 동안 거절됩니다. `CHARGING`(도크에 있음) 또는 `IDLE`(도크 밖) 일 때 부르십시오.
+
+#### 탐사
+
+| 명령 | 타입 | 하는 일 |
+|---|---|---|
+| `/frontier_explorer/reset` | `std_srvs/srv/Trigger` | 완료 플래그·블랙리스트·기준 위치를 지웁니다. **임무 관리자가 매 임무 시작 시 자동으로 부릅니다** — 수동으로 탐사를 다시 돌릴 때만 필요 |
+
+```bash
+ros2 service call /frontier_explorer/reset std_srvs/srv/Trigger
+```
+
+#### 절전·진단 — 수동 개입용
+
+| 명령 | 타입 | 하는 일 |
+|---|---|---|
+| `/rtabmap/pause` · `/rtabmap/resume` | `std_srvs/srv/Empty` | SLAM 연산 정지·재개. 포즈 그래프는 램에 남아 복귀가 즉시입니다 |
+| `/dock_marker_board/pause` · `/resume` | `std_srvs/srv/Empty` | 마커 검출 정지·재개 (CPU 절감) |
+| `/vodom_tf_relay/pause` · `/resume` | `std_srvs/srv/Empty` | 시각 오도메트리 **보정만** 동결. 얼린 동안에도 TF 는 계속 나갑니다 |
+
+```bash
+ros2 service call /rtabmap/pause            std_srvs/srv/Empty
+ros2 service call /dock_marker_board/pause  std_srvs/srv/Empty
+ros2 service call /vodom_tf_relay/pause     std_srvs/srv/Empty
+```
+
+> **이 셋은 `auto_dock` 이 충전 중 절전으로 이미 자동 호출합니다.** 손으로 부르는 것은 진단할 때뿐이고, 짝이 되는 `resume` 을 빠뜨리면 인지가 죽은 채로 주행하게 됩니다.
+
+#### Nav2 라이프사이클
+
+| 명령 | 타입 | 하는 일 |
+|---|---|---|
+| `/lifecycle_manager_navigation/manage_nodes` | `nav2_msgs/srv/ManageLifecycleNodes` | `command`: `0`=STARTUP `1`=PAUSE `2`=RESUME `3`=RESET `4`=SHUTDOWN |
+
+```bash
+# 기동이 실패했을 때 손으로 되살리기 — RESET 을 먼저 불러야 합니다
+ros2 service call /lifecycle_manager_navigation/manage_nodes \
+  nav2_msgs/srv/ManageLifecycleNodes "{command: 3}"
+ros2 service call /lifecycle_manager_navigation/manage_nodes \
+  nav2_msgs/srv/ManageLifecycleNodes "{command: 0}"
+```
+
+> 일부가 `active` 인 상태에서 STARTUP 만 보내면 "already active" 로 실패합니다. `nav2_startup_watchdog` 이 이 순서를 자동으로 수행하므로 보통은 부를 일이 없습니다.
+
+#### 서비스가 아니라 액션인 것
+
+도킹은 서비스가 아니라 액션입니다. `staged_dock` 이 서버입니다.
+
+```bash
+ros2 action send_goal /dock_robot   nav2_msgs/action/DockRobot "{use_dock_id: true, dock_id: home_dock}"
+ros2 action send_goal /undock_robot nav2_msgs/action/UndockRobot "{}"
+```
 
 ---
 
